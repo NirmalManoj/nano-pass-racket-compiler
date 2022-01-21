@@ -5,25 +5,6 @@ compiler passes. It will ultimately be up to you how exactly to do
 this, but for the first assignment you are given code templates in
 `compiler.rkt` to fill out.
 
-To start out, you must "clone" this repository:
-
-```
-   git clone https://github.com/IUCompilerCourse/public-student-support-code.git course-compiler
-```
-
-This creates a new folder `course-compiler`, which you can enter with:
-
-```
-   cd course-compiler
-```
-
-Before each assignment (and when told to by the instructor), you may need to update
-this code by pulling updates from GitHub by running this command from inside the folder:
-
-```
-   git pull
-```
-
 As you fill out the functions in `compiler.rkt`, tests are run with the
 `run-tests.rkt` module. You can run these tests either from the command
 line with:
