@@ -1,4 +1,4 @@
-## A1: Compiler for L<sup>var</sup> Language
+## A1: Compiler for L<sub>var</sub> Language
 
 ## Homework questions
 1. Solve **Exercises 2 to 9** of the text book.
