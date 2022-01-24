@@ -4,6 +4,9 @@
 1. Solve **Exercises 2 to 9** of the text book.
 2. Teams with **4 students** must additionally solve **Exercise 10 and 11** too.
 
+## Deadline
+13th February, 23:59
+
 ## Homework instructions
 
 For your homework exercises, you will be expected to implement various
