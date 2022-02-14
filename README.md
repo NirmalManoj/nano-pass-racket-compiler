@@ -1,3 +1,12 @@
+## A2: Compiler for *L<sub>var</sub>* Language with Register Allocation
+
+## Homework questions
+1. Solve **Exercises 13 to 17** of the text book.
+2. Teams with **4 students** must additionally solve **Exercise 18** too.
+
+## Deadline
+6th March, 23:59
+
 ## A1: Compiler for *L<sub>var</sub>* Language
 
 ## Homework questions
@@ -5,7 +14,7 @@
 2. Teams with **4 students** must additionally solve **Exercise 10 and 11** too.
 
 ## Deadline
-13th February, 23:59
+23rd February, 23:59
 
 ## Homework instructions
 
