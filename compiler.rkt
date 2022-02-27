@@ -73,9 +73,47 @@
   (match p
     [(Program info e) (Program info ((uniquify-exp '()) e))]))
 
+(define (rco_atom e)
+  (match e
+    [(Var x) (values (Var x) '())]
+    [(Int n) (values (Int n) '())]
+    [(Let x rhs body)
+     (define rhs_exp (rco_exp rhs))
+     (define-values (body_atom body_env) (rco_atom body))
+     (values body_atom (append `((,x . ,rhs_exp)) body_env))]
+    [(Prim op es)
+     (define tmp_var (gensym))
+     (define-values (es_var es_env)
+       (for/lists (e_var e_env) ([e es]) (rco_atom e)))
+     (define complete_env (append* es_env))
+     (define return_env (append complete_env `((,tmp_var . (Prim op es_var)))))
+     (values tmp_var return_env)]
+    [else (error "rco_atom unhandled case" e)]))
+
+(define (rco_exp e)
+  (define (helper_write_lets env exp)
+    (cond
+      [(empty? env) exp]
+      [else
+       (match (car env)
+         [`(,key . ,value) (Let key value (helper_write_lets (cdr env) exp))])]))
+  (match e
+    [(Var x) (Var x)]
+    [(Int n) (Int n)]
+    [(Let x rhs body)
+     (Let x (rco_exp rhs) (rco_exp body))]
+    [(Prim op es)
+     (define-values (es_var es_env)
+       (for/lists (e_var e_env) ([e es]) (rco_atom e)))
+     (define complete_env (append* es_env))
+     (helper_write_lets complete_env (Prim op es_var))]
+    [else (error "rco_exp unhandled case" e)]))
+
+
 ;; remove-complex-opera* : R1 -> R1
 (define (remove-complex-opera* p)
-  (error "TODO: code goes here (remove-complex-opera*)"))
+  (match p
+    [(Program info e) (Program info (rco_exp e))]))
 
 (define (explicate_tail e)
   (match e
@@ -125,7 +163,7 @@
   `(
      ("uniquify" ,uniquify ,interp-Lvar)
      ;; Uncomment the following passes as you finish them.
-     ;; ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
+     ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar)
      ;; ("instruction selection" ,select-instructions ,interp-x86-0)
      ;; ("assign homes" ,assign-homes ,interp-x86-0)
