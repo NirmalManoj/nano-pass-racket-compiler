@@ -239,9 +239,28 @@
   )
   )
 
+(define (patch_instr  instr)
+  (match instr
+    [(Instr op (list (Deref  reg1 offset1) (Deref reg2 offset2)))
+         (list (Instr 'movq (list (Deref reg1 offset1) (Reg 'rax)))
+               (Instr op (list (Reg 'rax) (Deref reg2 offset2))))]
+    [else (list instr)]))
+
+(define (patch_block block)
+  (match block
+    [(Block info block_body)
+    (Block info (append* (for/list ([instr block_body]) (patch_instr instr))))]))
+
 ;; patch-instructions : psuedo-x86 -> x86
 (define (patch-instructions p)
-  (error "TODO: code goes here (patch-instructions)"))
+  (match p
+    [(X86Program info body)
+     (X86Program info (for/list ([blk body])
+                        (match blk
+                          [`(,label . ,block) (cons label (patch_block block))]
+                          )
+                        ))]))
+
 
 ;; prelude-and-conclusion : x86 -> x86
 (define (prelude-and-conclusion p)
@@ -258,7 +277,7 @@
      ("explicate control" ,explicate-control ,interp-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
      ("assign homes" ,assign-homes ,interp-x86-0)
-     ;; ("patch instructions" ,patch-instructions ,interp-x86-0)
+     ("patch instructions" ,patch-instructions ,interp-x86-0)
      ;; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
 
