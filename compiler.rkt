@@ -140,9 +140,51 @@
   (match p
     [(Program info body) (CProgram info `((start . ,(explicate_tail body))))]))
 
+
+(define (select_instructions_atm a)
+  (match a
+    [(Int i) (Imm i)]
+    [(Var _) a]
+    )
+  )
+
+(define (assign_helper regi e)
+  (match e
+    [(Int i) '((Instr 'movq '((select_instructions_atm e) regi)))]
+    [(Var _) '((Instr 'movq '((select_instructions_atm e) regi)))]
+    [(Prim 'read '()) (list (Callq 'read_int) (Instr 'movq (list (Reg 'rax) regi)))]
+    [(Prim '- (list x)) (list (Instr 'movq '((select_instructions_atm x) regi))
+                              (Instr 'negq '(regi)))]
+    [(Prim '+ '(x1 x2)) (list (Instr 'movq '((select_instructions_atm x1) regi))
+                              (Instr 'addq '((select_instructions_atm x2) regi)))]
+    )
+  )
+
+(define (select_instructions_stmt stmt)
+  (match stmt
+    [(Assign (Var x) (Prim '+ '((Var x1) a1))) #:when (equal? x x1)
+                                         '((Instr addq (list (select_instructions_atm a1) (Var x))))]
+    [(Assign (Var x) (Prim '+ '(a1 (Var x1)))) #:when (equal? x x1)
+                                         '((Instr addq (list (select_instructions_atm a1) (Var x))))]
+    [(Assign x e) (assign_helper x e)]
+    )
+  )
+
+(define (select_instructions_tail e)
+  (match e
+    [(Seq stmt e*) (append (select_instructions_stmt stmt) (select_instructions_tail e*))]
+    [(Return (Prim 'read '())) '((Callq 'read_int) (Jmp 'conclusion))]
+    [(Return x) (append (assign_helper (Reg 'rax) x) '((Jmp 'conclusion)))]
+    )
+  )
+
+
+
 ;; select-instructions : C0 -> pseudo-x86
 (define (select-instructions p)
-  (error "TODO: code goes here (select-instructions)"))
+  (match p
+    
+    ))
 
 ;; assign-homes : pseudo-x86 -> pseudo-x86
 (define (assign-homes p)
