@@ -6,6 +6,7 @@
 (require "interp-Cvar.rkt")
 (require "interp.rkt")
 (require "utilities.rkt")
+(require "type-check-Cvar.rkt")
 (provide (all-defined-out))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -139,7 +140,7 @@
 ;; explicate-control : R1 -> C0
 (define (explicate-control p)
   (match p
-    [(Program info body) (CProgram info `((start . ,(explicate_tail body))))]))
+    [(Program info body) (type-check-Cvar (CProgram info `((start . ,(explicate_tail body)))))]))
 
 
 (define (select_instructions_atm a)
@@ -184,9 +185,59 @@
   (match p
     [(CProgram info `((start . ,block))) (X86Program info (list (cons 'start (Block '() (select_instructions_tail block)))))]))
 
+
+(define (calculate_stack_frame ls)
+  (cond
+    [(eq? (remainder (length ls) 16) 0) (* 8 (length ls))]
+    [else (* 8 (+ (length ls) 1))]
+    )
+  )
+
+(define (f_i v ls)
+  (cond
+   [(eq? (length ls) 0) 0] 
+   [(eq? v (car ls)) 1]
+   [else (+ 1 (f_i v (cdr ls)))]
+   )
+  )
+
+
+(define (assign_homes_imm imm ls)
+  (match imm
+    [(Imm int) (Imm int)]
+    [(Reg reg) (Reg reg)]
+    [(Var x) (Deref 'rbp (* -8 (f_i x (cdr ls))))]
+    )
+  )
+
+(define (assign_homes_instr i ls)
+  (match i
+    [(Instr op (list e1)) (Instr op (list (assign_homes_imm e1 ls)))]
+    [(Instr op (list e1 e2)) (Instr op (list (assign_homes_imm e1 ls) (assign_homes_imm e2 ls)))]
+    [_ i]
+    )
+  )
+
+(define (assign_homes_block b ls)
+  (match b
+    [(Block info es) (Block info (for/list ([e es]) (assign_homes_instr e ls)))]
+    )
+  )
+
 ;; assign-homes : pseudo-x86 -> pseudo-x86
 (define (assign-homes p)
-  (error "TODO: code goes here (assign-homes)"))
+  (match p
+    [(X86Program info body)
+    ; (Assign info (dict-set info 'locals-types '()))
+     (X86Program (dict-set info 'stack-space (calculate_stack_frame (dict-ref info 'locals-types)))
+     (for/list ([blk body])
+       (match blk
+         [`(,label . ,block) (cons label (assign_homes_block block  (dict-ref info 'locals-types)))]
+         ))
+     )
+     ]
+  )
+  )
 
 ;; patch-instructions : psuedo-x86 -> x86
 (define (patch-instructions p)
@@ -206,7 +257,7 @@
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
-     ;; ("assign homes" ,assign-homes ,interp-x86-0)
+     ("assign homes" ,assign-homes ,interp-x86-0)
      ;; ("patch instructions" ,patch-instructions ,interp-x86-0)
      ;; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
