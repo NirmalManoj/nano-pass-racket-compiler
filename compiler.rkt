@@ -58,7 +58,7 @@
 (define (pe-add r1 r2)
   (match* (r1 r2)
     [((Int n1) (Int n2)) (Int (fx+ n1 n2))]
-    [((Int n1) (Prim '+ (list (Int n2) exp))) (Prim '+ (list (fx+ n1 n2) exp))]
+    [((Int n1) (Prim '+ (list (Int n2) exp))) (Prim '+ (list (Int (fx+ n1 n2)) exp))] ; Comment to test Bonus 1
     [(_ _) (Prim '+ (list r1 r2))]))
 
 (define (pe-sub r1 r2)
@@ -185,7 +185,7 @@
   (match e
     [(Int i) (list (Instr 'movq (list (select_instructions_atm e) regi)))]
     [(Var _) (list (Instr 'movq (list (select_instructions_atm e) regi)))]
-    [(Prim 'read '()) (list (Callq 'read_int) (Instr 'movq (list (Reg 'rax) regi)))]
+    [(Prim 'read '()) (list (Callq 'read_int 1) (Instr 'movq (list (Reg 'rax) regi)))]
     [(Prim '- (list x)) (list (Instr 'movq (list (select_instructions_atm x) regi))
                               (Instr 'negq (list regi)))]
     [(Prim '+ (list x1 x2)) (list (Instr 'movq (list (select_instructions_atm x1) regi))
@@ -206,7 +206,7 @@
 (define (select_instructions_tail e)
   (match e
     [(Seq stmt e*) (append (select_instructions_stmt stmt) (select_instructions_tail e*))]
-    [(Return (Prim 'read '())) (list (Callq 'read_int) (Jmp 'conclusion))]
+    [(Return (Prim 'read '())) (list (Callq 'read_int 1) (Jmp 'conclusion))]
     [(Return x) (append (assign_helper (Reg 'rax) x) (list (Jmp 'conclusion)))]
     )
   )
@@ -325,7 +325,6 @@
   `(
      ("pe-Lvar", pe-Lvar, interp-Lvar)
      ("uniquify" ,uniquify ,interp-Lvar)
-     ;; Uncomment the following passes as you finish them.
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
