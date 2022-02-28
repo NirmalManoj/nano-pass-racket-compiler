@@ -89,8 +89,8 @@
      (define-values (es_var es_env)
        (for/lists (e_var e_env) ([e es]) (rco_atom e)))
      (define complete_env (append* es_env))
-     (define return_env (append complete_env `((,tmp_var . (Prim op es_var)))))
-     (values tmp_var return_env)]
+     (define return_env (append complete_env `((,tmp_var . ,(Prim op es_var)))))
+     (values (Var tmp_var) return_env)]
     [else (error "rco_atom unhandled case" e)]))
 
 (define (rco_exp e)
@@ -291,14 +291,14 @@
 ;; must be named "compiler.rkt"
 (define compiler-passes
   `(
-     ("pe-Lvar", pe-Lvar, interp-Lvar)
+   ;  ("pe-Lvar", pe-Lvar, interp-Lvar)
      ("uniquify" ,uniquify ,interp-Lvar)
      ;; Uncomment the following passes as you finish them.
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
-     ("explicate control" ,explicate-control ,interp-Cvar)
-     ("instruction selection" ,select-instructions ,interp-x86-0)
-     ("assign homes" ,assign-homes ,interp-x86-0)
-     ("patch instructions" ,patch-instructions ,interp-x86-0)
-     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
+    ; ("explicate control" ,explicate-control ,interp-Cvar)
+    ; ("instruction selection" ,select-instructions ,interp-x86-0)
+    ; ("assign homes" ,assign-homes ,interp-x86-0)
+     ;("patch instructions" ,patch-instructions ,interp-x86-0)
+    ; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
 
