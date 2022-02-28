@@ -28,6 +28,27 @@
     [(Program info e) (Program info (flip-exp e))]))
 
 
+;; Our scripts
+(define (convert-residual-exp e) ;; Bonus 2
+  (match e
+    [(Var x) (Var x)]
+    [(Int n) (Int n)]
+    [(Prim 'read '()) (Prim 'read '())]
+    [(Prim '- (list (Var x))) (Prim '- (list (Var x)))]
+    [(Prim '- (list (Prim 'read '()))) (Prim '- (list (Prim 'read '())))]
+    [(Prim '+ (list (Int n) other)) (Prim '+ (list (Int n) (pe-exp other)))]
+    [(Prim '+ (list other (Int n))) (Prim '+ (list (Int n) (pe-exp other)))]
+    [(Prim '+ (list other1 other2)) (Prim '+ (list (pe-exp other1) (pe-exp other2)))]
+
+    [(Prim '- (list (Int n))) (Int (fx- 0 n))]
+    [(Prim '- (list (Int n) other)) (Prim '+ (list (Int n) (Prim '- (list (pe-exp other)))))]
+    [(Prim '- (list other (Int n))) (Prim '+ (list (Int (fx- 0 n)) (pe-exp other)))]
+    [(Prim '- (list other1 other2)) (Prim '+ (list (pe-exp other1) (Prim '- (list (pe-exp other2)))))]
+    [(Prim '- (list other)) (Prim '- (list (pe-exp other)))]
+
+    [(Let x rhs body) (Let x (pe-exp rhs) (pe-exp body))]))
+
+
 ;; Next we have the partial evaluation pass described in the book.
 (define (pe-neg r)
   (match r
@@ -37,20 +58,31 @@
 (define (pe-add r1 r2)
   (match* (r1 r2)
     [((Int n1) (Int n2)) (Int (fx+ n1 n2))]
+    [((Int n1) (Prim '+ (list (Int n2) exp))) (Prim '+ (list (fx+ n1 n2) exp))]
     [(_ _) (Prim '+ (list r1 r2))]))
 
+(define (pe-sub r1 r2)
+  (match* (r1 r2)
+    [((Int n1) (Int n2)) (Int (fx- n1 n2))]
+    [(_ _) (Prim '- (list r1 r2))]))
+
 (define (pe-exp e)
-  (match e
+  ;(define residual_e e) ;; Uncomment to test Bonus 1
+  (define residual_e (convert-residual-exp e)) ;; Comment to test Bonus 1
+  (match residual_e
     [(Var x) (Var x)]
     [(Int n) (Int n)]
     [(Prim 'read '()) (Prim 'read '())]
-    [(Prim '- (list e1)) (pe-neg (pe-exp e1))]
     [(Prim '+ (list e1 e2)) (pe-add (pe-exp e1) (pe-exp e2))]
-    [(Let x rhs body) (Let x (pe-exp rhs) (pe-exp body))]))
+    [(Prim '- (list e1)) (pe-neg (pe-exp e1))]
+    [(Prim '- (list e1 e2)) (pe-sub (pe-exp e1) (pe-exp e2))]
+    [(Let x rhs body) (Let x (pe-exp rhs) (pe-exp body))]
+    [else residual_e]))
 
 (define (pe-Lvar p)
   (match p
     [(Program info e) (Program info (pe-exp e))]))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; HW1 Passes
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -154,9 +186,9 @@
     [(Int i) (list (Instr 'movq (list (select_instructions_atm e) regi)))]
     [(Var _) (list (Instr 'movq (list (select_instructions_atm e) regi)))]
     [(Prim 'read '()) (list (Callq 'read_int) (Instr 'movq (list (Reg 'rax) regi)))]
-    [(Prim '- `(list ,x)) (list (Instr 'movq (list (select_instructions_atm x) regi))
+    [(Prim '- (list x)) (list (Instr 'movq (list (select_instructions_atm x) regi))
                               (Instr 'negq (list regi)))]
-    [(Prim '+ `(,x1 ,x2)) (list (Instr 'movq (list (select_instructions_atm x1) regi))
+    [(Prim '+ (list x1 x2)) (list (Instr 'movq (list (select_instructions_atm x1) regi))
                               (Instr 'addq (list (select_instructions_atm x2) regi)))]
     )
   )
@@ -197,7 +229,7 @@
 (define (f_i v ls)
   (cond
    [(eq? (length ls) 0) 0] 
-   [(eq? v (car ls)) 1]
+   [(eq? v (car (car ls))) 1]
    [else (+ 1 (f_i v (cdr ls)))]
    )
   )
@@ -207,7 +239,7 @@
   (match imm
     [(Imm int) (Imm int)]
     [(Reg reg) (Reg reg)]
-    [(Var x) (Deref 'rbp (* -8 (f_i x (cdr ls))))]
+    [(Var x) (Deref 'rbp (* -8 (f_i x ls)))]
     )
   )
 
@@ -291,14 +323,14 @@
 ;; must be named "compiler.rkt"
 (define compiler-passes
   `(
-   ;  ("pe-Lvar", pe-Lvar, interp-Lvar)
+     ("pe-Lvar", pe-Lvar, interp-Lvar)
      ("uniquify" ,uniquify ,interp-Lvar)
      ;; Uncomment the following passes as you finish them.
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
-    ; ("explicate control" ,explicate-control ,interp-Cvar)
-    ; ("instruction selection" ,select-instructions ,interp-x86-0)
-    ; ("assign homes" ,assign-homes ,interp-x86-0)
-     ;("patch instructions" ,patch-instructions ,interp-x86-0)
-    ; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
+     ("explicate control" ,explicate-control ,interp-Cvar)
+     ("instruction selection" ,select-instructions ,interp-x86-0)
+     ("assign homes" ,assign-homes ,interp-x86-0)
+     ("patch instructions" ,patch-instructions ,interp-x86-0)
+     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
 
