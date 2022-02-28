@@ -294,6 +294,14 @@
                           )
                         ))]))
 
+(define (prelude_conclude_block blck)
+  (match blck
+    [(Block info block_body)
+     (Block info (for/list ([instr block_body])
+                            (match instr
+                              [(Jmp 'main) (Jmp '_main)]
+                              [else instr])))]))
+
 
 ;; prelude-and-conclusion : x86 -> x86
 (define (prelude-and-conclusion p)
@@ -315,7 +323,8 @@
        [(equal? (system-type 'os) 'macosx)
         (X86Program info (for/list ([blk program])
           (match blk
-            [`(,label . ,block) (cons (string->symbol (string-append "_" (symbol->string label))) block)])))]
+            [`('main . ,block) (cons '_main (prelude_conclude_block block))]
+            [`(,label . ,block) (cons label (prelude_conclude_block block))])))]
        [else (X86Program info program)])]))
 
 ;; Define the compiler passes to be used by interp-tests and the grader
