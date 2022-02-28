@@ -41,15 +41,16 @@
 
 (define (pe-exp e)
   (match e
+    [(Var x) (Var x)]
     [(Int n) (Int n)]
     [(Prim 'read '()) (Prim 'read '())]
     [(Prim '- (list e1)) (pe-neg (pe-exp e1))]
-    [(Prim '+ (list e1 e2)) (pe-add (pe-exp e1) (pe-exp e2))]))
+    [(Prim '+ (list e1 e2)) (pe-add (pe-exp e1) (pe-exp e2))]
+    [(Let x rhs body) (Let x (pe-exp rhs) (pe-exp body))]))
 
-(define (pe-Lint p)
+(define (pe-Lvar p)
   (match p
     [(Program info e) (Program info (pe-exp e))]))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; HW1 Passes
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -290,6 +291,7 @@
 ;; must be named "compiler.rkt"
 (define compiler-passes
   `(
+     ("pe-Lvar", pe-Lvar, interp-Lvar)
      ("uniquify" ,uniquify ,interp-Lvar)
      ;; Uncomment the following passes as you finish them.
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
