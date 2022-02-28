@@ -162,9 +162,9 @@
 (define (select_instructions_stmt stmt)
   (match stmt
     [(Assign (Var x) (Prim '+ `((Var ,x1) ,a1))) #:when (equal? x x1)
-                                         ( list (Instr 'addq (list (select_instructions_atm a1) (Var x))))]
+                                         (list (Instr 'addq (list (select_instructions_atm a1) (Var x))))]
     [(Assign (Var x) (Prim '+ `(,a1 (Var ,x1)))) #:when (equal? x x1)
-                                         ( list (Instr 'addq (list (select_instructions_atm a1) (Var x))))]
+                                         (list (Instr 'addq (list (select_instructions_atm a1) (Var x))))]
     [(Assign x e) (assign_helper x e)]
     )
   )
@@ -182,7 +182,7 @@
 ;; select-instructions : C0 -> pseudo-x86
 (define (select-instructions p)
   (match p
-    [(CProgram info `((start . ,block))) (X86Program info `((start . ,(select_instructions_tail block))))]))
+    [(CProgram info `((start . ,block))) (X86Program info (list (cons 'start (Block '() (select_instructions_tail block)))))]))
 
 ;; assign-homes : pseudo-x86 -> pseudo-x86
 (define (assign-homes p)
