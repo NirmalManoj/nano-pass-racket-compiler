@@ -4,6 +4,7 @@
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
 (require "interp-Cvar.rkt")
+(require "interp.rkt")
 (require "utilities.rkt")
 (provide (all-defined-out))
 
@@ -144,28 +145,26 @@
 (define (select_instructions_atm a)
   (match a
     [(Int i) (Imm i)]
-    [(Var _) a]
-    )
-  )
+    [(Var _) a]))
 
 (define (assign_helper regi e)
   (match e
-    [(Int i) '((Instr 'movq '((select_instructions_atm e) regi)))]
-    [(Var _) '((Instr 'movq '((select_instructions_atm e) regi)))]
+    [(Int i) (list (Instr 'movq (list (select_instructions_atm e) regi)))]
+    [(Var _) (list (Instr 'movq (list (select_instructions_atm e) regi)))]
     [(Prim 'read '()) (list (Callq 'read_int) (Instr 'movq (list (Reg 'rax) regi)))]
-    [(Prim '- (list x)) (list (Instr 'movq '((select_instructions_atm x) regi))
-                              (Instr 'negq '(regi)))]
-    [(Prim '+ '(x1 x2)) (list (Instr 'movq '((select_instructions_atm x1) regi))
-                              (Instr 'addq '((select_instructions_atm x2) regi)))]
+    [(Prim '- `(list ,x)) (list (Instr 'movq (list (select_instructions_atm x) regi))
+                              (Instr 'negq (list regi)))]
+    [(Prim '+ `(,x1 ,x2)) (list (Instr 'movq (list (select_instructions_atm x1) regi))
+                              (Instr 'addq (list (select_instructions_atm x2) regi)))]
     )
   )
 
 (define (select_instructions_stmt stmt)
   (match stmt
-    [(Assign (Var x) (Prim '+ '((Var x1) a1))) #:when (equal? x x1)
-                                         '((Instr addq (list (select_instructions_atm a1) (Var x))))]
-    [(Assign (Var x) (Prim '+ '(a1 (Var x1)))) #:when (equal? x x1)
-                                         '((Instr addq (list (select_instructions_atm a1) (Var x))))]
+    [(Assign (Var x) (Prim '+ `((Var ,x1) ,a1))) #:when (equal? x x1)
+                                         ( list (Instr 'addq (list (select_instructions_atm a1) (Var x))))]
+    [(Assign (Var x) (Prim '+ `(,a1 (Var ,x1)))) #:when (equal? x x1)
+                                         ( list (Instr 'addq (list (select_instructions_atm a1) (Var x))))]
     [(Assign x e) (assign_helper x e)]
     )
   )
@@ -173,8 +172,8 @@
 (define (select_instructions_tail e)
   (match e
     [(Seq stmt e*) (append (select_instructions_stmt stmt) (select_instructions_tail e*))]
-    [(Return (Prim 'read '())) '((Callq 'read_int) (Jmp 'conclusion))]
-    [(Return x) (append (assign_helper (Reg 'rax) x) '((Jmp 'conclusion)))]
+    [(Return (Prim 'read '())) (list (Callq 'read_int) (Jmp 'conclusion))]
+    [(Return x) (append (assign_helper (Reg 'rax) x) (list (Jmp 'conclusion)))]
     )
   )
 
@@ -183,8 +182,7 @@
 ;; select-instructions : C0 -> pseudo-x86
 (define (select-instructions p)
   (match p
-    
-    ))
+    [(CProgram info `((start . ,block))) (X86Program info `((start . ,(select_instructions_tail block))))]))
 
 ;; assign-homes : pseudo-x86 -> pseudo-x86
 (define (assign-homes p)
@@ -207,7 +205,7 @@
      ;; Uncomment the following passes as you finish them.
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar)
-     ;; ("instruction selection" ,select-instructions ,interp-x86-0)
+     ("instruction selection" ,select-instructions ,interp-x86-0)
      ;; ("assign homes" ,assign-homes ,interp-x86-0)
      ;; ("patch instructions" ,patch-instructions ,interp-x86-0)
      ;; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
