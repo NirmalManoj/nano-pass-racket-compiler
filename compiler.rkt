@@ -311,11 +311,11 @@
                                                 (list
                                                  (Instr 'pushq (list (Reg 'rbp)))
                                                  (Instr 'movq (list (Reg 'rsp) (Reg 'rbp)))
-                                                 (Instr 'subq (list (Imm 16) (Reg 'rsp)))
+                                                 (Instr 'subq (list (Imm (dict-ref info 'stack-space)) (Reg 'rsp)))
                                                  (Jmp 'start))))))
      (define conc-block (list (cons 'conclusion (Block '()
                                                 (list
-                                                 (Instr 'addq (list (Imm 16) (Reg 'rsp)))
+                                                 (Instr 'addq (list (Imm (dict-ref info 'stack-space)) (Reg 'rsp)))
                                                  (Instr 'popq (list (Reg 'rbp))) 
                                                  (Retq))))))
      (define program (append main-block body conc-block))
