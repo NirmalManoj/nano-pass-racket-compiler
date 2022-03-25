@@ -16,7 +16,7 @@
 ;; 
 ;; The interpreters for the source languages (Lvar, Lif, ...)
 ;; and the C intermediate languages Cvar and Cif
-;; are in separate files, e.g., interp-Lvar.rkt.
+;; are in separate files, e.g., interp-Rvar.rkt.
 
 #;(define interp-R3-prime
   (lambda (p)
@@ -583,7 +583,11 @@
 	   [fromspace_end   (box uninitialized)]
 	   [rootstack_begin (box uninitialized)]
 	   [global-label-table
+<<<<<<< HEAD
 	    (make-immutable-hash
+=======
+	    (make-hash
+>>>>>>> template/master
 	     `((free_ptr	 . ,free_ptr)
 	       (fromspace_begin	 . ,fromspace_begin)
 	       (fromspace_end	 . ,fromspace_end)
@@ -1001,7 +1005,11 @@
              interp-x86-store)
 
     (inherit-field result rootstack_begin free_ptr fromspace_end
+<<<<<<< HEAD
 		   uninitialized)
+=======
+		   uninitialized global-label-table)
+>>>>>>> template/master
 
     (define/public (apply-fun interp fun-val arg-vals)
       (match fun-val
@@ -1079,9 +1087,13 @@
 	  ;; For R4
 	  [(Def f `([,xs : ,ps] ...) rt info body)
 	   (cons f `(function ,xs ,body))]
+<<<<<<< HEAD
 	  [(FunRef f)
 	   (lookup f env)]
 	  [(FunRefArity f n)
+=======
+	  [(FunRef f n)
+>>>>>>> template/master
 	   (lookup f env)]
 	  [(Apply fun args)
 	    (define fun-val ((interp-F env) fun))
@@ -1148,7 +1160,11 @@
       (lambda (ast)
         (define result
 	(match ast
+<<<<<<< HEAD
           [(FunRef f)
+=======
+          [(FunRef f n)
+>>>>>>> template/master
            (lookup f env)]
           [(Call f args)
            (define arg-vals (map (interp-C-exp env) args))
@@ -1274,7 +1290,11 @@
             [(StackArg n)
              (define x (stack-arg-name n))
              (lookup x env)]
+<<<<<<< HEAD
             [(FunRef f)
+=======
+            #;[(FunRef f n)
+>>>>>>> template/master
              (lookup f env)]
             [else ((super interp-x86-exp env) ast)]))
         (copious "R4/interp-x86-exp" (observe-value result))
@@ -1334,7 +1354,11 @@
     (define/public (interp-x86-def ast)
       (match ast
         [(Def f ps rt info blocks)
+<<<<<<< HEAD
          (mcons f `(function ,(dict-set info 'name f) ,blocks ()))]
+=======
+         (cons f `(function ,(dict-set info 'name f) ,blocks ()))]
+>>>>>>> template/master
         ))
         
     ;; The below applies before register allocation
@@ -1348,10 +1372,21 @@
            (set! root-stack-pointer (unbox rootstack_begin))
            (define top-level (for/list ([d ds]) (interp-x86-def d)))
            ;; tie the knot
+<<<<<<< HEAD
            (for/list ([b top-level])
              (set-mcdr! b (match (mcdr b)
                             [`(function ,xs ,body ())
                              `(function ,xs ,body ,top-level)])))
+=======
+           #;(for/list ([b top-level])
+             (set-mcdr! b (match (mcdr b)
+                            [`(function ,xs ,body ())
+                             `(function ,xs ,body ,top-level)])))
+           ;; Put the functions in the globals table
+           (for ([(label fun) (in-dict top-level)])
+             (dict-set! global-label-table label (box fun)))
+             
+>>>>>>> template/master
            (define env^ (list (cons 'r15 (unbox rootstack_begin))))
            (define result-env (call-function (lookup 'main top-level) '() env^))
            (lookup 'rax result-env)]
@@ -1368,10 +1403,21 @@
            (set! root-stack-pointer (unbox rootstack_begin))
            (define top-level (for/list ([d ds]) (interp-x86-def d)))
            ;; tie the knot
+<<<<<<< HEAD
            (for/list ([b top-level])
              (set-mcdr! b (match (mcdr b)
                             [`(function ,xs ,body ())
                              `(function ,xs ,body ,top-level)])))
+=======
+           #;(for/list ([b top-level])
+             (set-mcdr! b (match (mcdr b)
+                            [`(function ,xs ,body ())
+                             `(function ,xs ,body ,top-level)])))
+           ;; Put the functions in the globals table
+           (for ([(label fun) (in-dict top-level)])
+             (dict-set! global-label-table label (box fun)))
+           
+>>>>>>> template/master
            ;; (define spills (dict-ref info 'num-spills))
            ;; (define variable-size 8) ;; ugh -Jeremy
            ;; (define root-size (* variable-size (cdr spills)))
@@ -1596,7 +1642,11 @@
            #;(define anys (for/list ([x xs]) 'Any))
 	   #;`(tagged ,(lambda ,xs ,body ,env) (,anys -> Any))
            `(function ,xs ,body ,env)]
+<<<<<<< HEAD
 	  [(FunRefArity f n)
+=======
+	  [(FunRef f n)
+>>>>>>> template/master
 	   (lookup f env)]
           [(Prim 'and (list e1 e2))
            (if ((interp-F env) e1)
@@ -1717,7 +1767,11 @@
 	       (set-mcdr! b (match (mcdr b)
 			      [`(function ,xs ,body)
 			       `(function ,xs ,body ,top-level)])))
+<<<<<<< HEAD
 	     ((interp-F top-level) (Apply (FunRef 'main) '())))]
+=======
+	     ((interp-F top-level) (Apply (FunRef 'main 0) '())))]
+>>>>>>> template/master
           [(WhileLoop cnd body)
            (define (loop)
              (cond [((interp-F env) cnd)

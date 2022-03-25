@@ -18,3 +18,16 @@ compiled/
 
 # Dependency tracking files
 *.dep
+.DS_STORE
+*.s
+*.o
+*.out
+*.dSYM
+*~
+*.aux
+*.log
+*.pdf
+.#*
+compiled
+*.dot
+log*
