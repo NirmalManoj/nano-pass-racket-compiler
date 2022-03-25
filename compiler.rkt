@@ -219,6 +219,74 @@
     [(CProgram info `((start . ,block))) (X86Program info (list (cons 'start (Block '() (select_instructions_tail block)))))]))
 
 
+(define (get-loc e)
+  (match e
+    [(Var p) (set e)]
+    [(Reg p) (set e)]
+    [else (set)]))
+
+(define caller-saved (list (Reg 'rax) (Reg 'rcx) (Reg 'rdx) (Reg 'rsi) (Reg 'rdi) (Reg 'r8) (Reg 'r9)
+                           (Reg 'r10) (Reg 'r11)))
+
+(define callee-saved (list (Reg 'rsp) (Reg 'rbp) (Reg 'rbx) (Reg 'r12) (Reg 'r13) (Reg 'r14) (Reg 'r15)))
+
+(define arguments (list (Reg 'rdi) (Reg 'rsi) (Reg 'rdx) (Reg 'rcx) (Reg 'r8) (Reg 'r9)))
+
+(define (get-k-el l k)
+  (cond
+    [(equal? k 0) '()]
+    [else (cons (car l) (get-k-el (cdr l) (- k 1)))]))
+
+(define (get-read instr)
+  (match instr
+  [(Instr 'addq (list a b)) (set-union (get-loc a) (get-loc b))]
+  [(Instr 'negq (list a))(set-union (get-loc a))]
+  [(Instr 'movq (list a b))(set-union (get-loc a))]
+  [(Callq label arity) (list->set (get-k-el arguments arity))]))
+
+(define (get-write instr)
+  (match instr
+  [(Instr 'addq (list a b)) (set-union (get-loc b))]
+  [(Instr 'negq (list a))(set-union (get-loc a))]
+  [(Instr 'movq (list a b))(set-union (get-loc b))]
+  [(Callq label arity) (list->set caller-saved)]))
+
+
+(define (uncover-live-instr instr l-after label->live)
+  (match instr
+    ['()  l-after]
+    [`(,(Jmp label) . ,rest)
+     (define jmp-after (dict-ref label->live label))
+     (uncover-live-instr rest (cons (set-union jmp-after (car l-after)) l-after) label->live)]
+    [else
+     (define cur-instr (car instr))
+     (define instr-read (get-read cur-instr))
+     (define instr-write (get-write cur-instr))
+     ; (display  l-after)
+     (uncover-live-instr (cdr instr)
+                         (cons
+                          (set-union (set-subtract (car l-after) instr-write) instr-read)
+                          l-after)
+                         label->live)]))
+
+(define (uncover-live-block blk label->live)
+  (match blk
+    [(cons label (Block info block-body))
+     (define reverse-blk-body (reverse block-body))
+     (define l-block (uncover-live-instr reverse-blk-body (list (set)) label->live))
+     (cons label (Block (dict-set info 'live-after l-block) block-body))
+     ]))
+
+
+;; Liveliness Analysis
+(define (uncover-live p)
+  (match p
+    [(X86Program info body)
+     (define label->live `((conclusion  . ,(set (Reg 'rax) (Reg 'rsp)))))
+     (X86Program info (for/list ([blk body]) (uncover-live-block blk label->live)))]))
+
+
+
 (define (calculate_stack_frame ls)
   (cond
     [(eq? (remainder (length ls) 16) 0) (* 8 (length ls))]
@@ -337,6 +405,7 @@
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
+     ("uncover live", uncover-live, interp-x86-0)
      ("assign homes" ,assign-homes ,interp-x86-0)
      ("patch instructions" ,patch-instructions ,interp-x86-0)
      ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
