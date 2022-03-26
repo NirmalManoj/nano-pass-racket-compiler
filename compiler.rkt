@@ -1,6 +1,8 @@
 #lang racket
 (require racket/set racket/stream)
 (require racket/fixnum)
+(require graph)
+(require "priority_queue.rkt")
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
 (require "interp-Cvar.rkt")
@@ -242,14 +244,16 @@
   [(Instr 'addq (list a b)) (set-union (get-loc a) (get-loc b))]
   [(Instr 'negq (list a))(set-union (get-loc a))]
   [(Instr 'movq (list a b))(set-union (get-loc a))]
-  [(Callq label arity) (list->set (get-k-el arguments arity))]))
+  [(Callq label arity) (list->set (get-k-el arguments arity))]
+  [else (set)]))
 
 (define (get-write instr)
   (match instr
   [(Instr 'addq (list a b)) (set-union (get-loc b))]
   [(Instr 'negq (list a))(set-union (get-loc a))]
   [(Instr 'movq (list a b))(set-union (get-loc b))]
-  [(Callq label arity) (list->set caller-saved)]))
+  [(Callq label arity) (list->set caller-saved)]
+  [else (set)]))
 
 
 (define (uncover-live-instr instr l-after label->live)
@@ -274,8 +278,7 @@
     [(cons label (Block info block-body))
      (define reverse-blk-body (reverse block-body))
      (define l-block (uncover-live-instr reverse-blk-body (list (set)) label->live))
-     (cons label (Block (dict-set info 'live-after l-block) block-body))
-     ]))
+     (cons label (Block (dict-set info 'live-after (reverse l-block)) block-body))]))
 
 
 ;; Liveliness Analysis
@@ -284,6 +287,41 @@
     [(X86Program info body)
      (define label->live `((conclusion  . ,(set (Reg 'rax) (Reg 'rsp)))))
      (X86Program info (for/list ([blk body]) (uncover-live-block blk label->live)))]))
+
+
+(define (build-interference-instr instr-list live-list graph)
+  (match instr-list
+    ['() graph]
+    [`(,(Instr movq (list a b)) . ,rest)
+     (define current-live (car live-list))
+     (for ([l current-live])
+       (when (and (not (equal? a l)) (not (equal? b l)))
+           (add-edge! graph b l)))    
+     (build-interference-instr (cdr instr-list) (cdr live-list) graph)]
+    [else
+     (define current-live (car live-list))
+     (define current-writes (get-write (car instr-list)))
+     (for* ([l current-live]
+            [w current-writes])
+       (when (not (equal? l w)) (add-edge! graph l w)))]
+    (build-interference-instr (cdr instr-list) (cdr live-list) graph)))
+
+
+
+(define (build-interference-block blk)
+  (match blk
+    [(cons label (Block info block-body))
+     (define live-after (dict-ref info 'live-after))
+     (define inter-graph (build-interference-instr block-body live-after (undirected-graph '())))
+     (cons label (Block (dict-set info 'conflicts inter-graph) block-body))]))
+
+
+;;build-interference
+(define (build-interference p)
+  (match p
+    [(X86Program info body)
+     (X86Program info (for/list ([blk body]) (build-interference-block blk)))]))
+
 
 
 
@@ -406,6 +444,7 @@
      ("explicate control" ,explicate-control ,interp-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
      ("uncover live", uncover-live, interp-x86-0)
+     ("build interference", build-interference, interp-x86-0)
      ("assign homes" ,assign-homes ,interp-x86-0)
      ("patch instructions" ,patch-instructions ,interp-x86-0)
      ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
