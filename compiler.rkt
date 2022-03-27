@@ -175,7 +175,12 @@
 ;; explicate-control : R1 -> C0
 (define (explicate-control p)
   (match p
-    [(Program info body) (type-check-Cvar (CProgram info `((start . ,(explicate_tail body)))))]))
+    [(Program info body)
+
+     (define cpro (CProgram info `((start . ,(explicate_tail body)))))
+     (display cpro)
+     (display "\n\n\n")
+     (type-check-Cvar cpro)]))
 
 
 (define (select_instructions_atm a)
@@ -218,7 +223,11 @@
 ;; select-instructions : C0 -> pseudo-x86
 (define (select-instructions p)
   (match p
-    [(CProgram info `((start . ,block))) (X86Program info (list (cons 'start (Block '() (select_instructions_tail block)))))]))
+    [(CProgram info `((start . ,block)))
+     (define instr (X86Program info (list (cons 'start (Block '() (select_instructions_tail block))))))
+     (display instr)
+     (display "\n\n\n")
+     instr]))
 
 
 (define (get-loc e)
@@ -278,7 +287,11 @@
     [(cons label (Block info block-body))
      (define reverse-blk-body (reverse block-body))
      (define l-block (uncover-live-instr reverse-blk-body (list (set)) label->live))
-     (cons label (Block (dict-set info 'live-after (reverse l-block)) block-body))]))
+     (display l-block)
+     (display "\n\n\n")
+   
+     ;;(cons label (Block (dict-set info 'live-after (reverse l-block)) block-body))])) Should not be reversed
+     (cons label (Block (dict-set info 'live-after l-block) block-body))]))
 
 
 ;; Liveliness Analysis
@@ -294,7 +307,10 @@
     ['() graph]
     [`(,(Instr movq (list a b)) . ,rest)
      (define current-live (car live-list))
+     (when (or (isVar? a) (isReg? a)) (add-vertex! graph a))
+     (when (or (isVar? b) (isReg? b)) (add-vertex! graph b))
      (for ([l current-live])
+       (add-vertex! graph l)
        (when (and (not (equal? a l)) (not (equal? b l)))
            (add-edge! graph b l)))    
      (build-interference-instr (cdr instr-list) (cdr live-list) graph)]
@@ -303,16 +319,26 @@
      (define current-writes (get-write (car instr-list)))
      (for* ([l current-live]
             [w current-writes])
-       (when (not (equal? l w)) (add-edge! graph l w)))]
-    (build-interference-instr (cdr instr-list) (cdr live-list) graph)))
-
-
+       (add-vertex! graph l)
+       (when (not (equal? l w)) (add-edge! graph l w)))
+    (build-interference-instr (cdr instr-list) (cdr live-list) graph)]))
 
 (define (build-interference-block blk)
   (match blk
     [(cons label (Block info block-body))
      (define live-after (dict-ref info 'live-after))
-     (define inter-graph (build-interference-instr block-body live-after (undirected-graph '())))
+     (display "lengths\n")
+     (display (length block-body))
+     (display " ")
+     (display (length live-after))
+     (display "\n\n")
+     ;; Note here the lengths dont match blk has 1 element less than live
+     ;; this is fine!!
+     ;; we have to ignore the first element of the live-after
+     (define inter-graph (build-interference-instr block-body (cdr live-after) (undirected-graph '())))
+     ;;(define inter-graph (build-interference-instr block-body live-after (undirected-graph '())))
+     (print-graph inter-graph)
+     (display "\n\n\n")
      (cons label (Block (dict-set info 'conflicts inter-graph) block-body))]))
 
 
@@ -323,45 +349,158 @@
      (X86Program info (for/list ([blk body]) (build-interference-block blk)))]))
 
 
+(define (gen-init-vertex-color g)
+  (define vertices (get-vertices g))
+  (define color-lval-pair (foldl (lambda (v a)
+           (define last-el (car a))
+           (define cur-color (cdr a))             
+           (match v
+             [(Reg _) (define update-color (dict-set cur-color v
+                                                     (if (list? (member v alloc-registers))
+                                                          (index-of alloc-registers v) (- last-el 1))))
+                      (if (list? (member v alloc-registers))
+                          (cons last-el update-color)
+                          (cons (- last-el 1) update-color))]
+             [else a])) (cons 0 '()) vertices))
+  (cdr color-lval-pair))
+
+(define (gen-init-saturation g vertex-color)
+  (define vertices (get-vertices g))
+  (map (lambda (v)
+         (define n (get-neighbors g v))
+         (define sat (foldl (lambda (nv a)
+                  (if (dict-has-key? vertex-color nv) (set-union (set (dict-ref vertex-color nv)) a) a))
+                (set) n))
+         (cons v sat))
+       vertices))
+
+(define (isReg? p)
+  (match p
+    [(Reg _) #t]
+    [else #f]))
+
+(define (isVar? p)
+  (match p
+    [(Var _) #t]
+    [else #f]))
+
+
+(define (get-lowest-col sat val)
+  (if (set-member? sat val) (get-lowest-col sat (+ val 1)) val))
+
+
+
+(define (color-graph g vertex-color vertex-saturation)
+  (define q (make-pqueue (lambda (a b) (>
+                                        (set-count (dict-ref vertex-saturation a))
+                                        (set-count (dict-ref vertex-saturation b))))))
+  ;; push all ements in the q
+  (define vertex-node (foldl
+   (lambda (v accu)
+   (if (isVar? v) (dict-set accu v (pqueue-push! q v)) accu))
+   '()
+   (get-vertices g)))
+
+  ;; the loop
+  (define (loop g col sat q)
+    ;; operation on neighbors on getting color
+    (define (neighbour-operation n sat cur-color)
+      (if (empty? n)
+          sat
+          (let* ([n-sat (set-union (dict-ref sat (car n)) (set cur-color))]
+                 [new-sat (dict-set sat (car n) n-sat)])
+            (pqueue-decrease-key! q (dict-ref vertex-node (car n)))
+            (neighbour-operation (cdr n) new-sat cur-color))))
+    
+    (if (equal? (pqueue-count q) 0)
+        col
+        (let*
+            ([cur-vertex (pqueue-pop! q)]
+             [cur-color (get-lowest-col (dict-ref sat cur-vertex) 0)]
+             [new-sat (neighbour-operation (filter isVar? (get-neighbors g cur-vertex)) sat cur-color)])
+             (loop g (dict-set col cur-vertex cur-color) new-sat q))))
+    
+  (loop g vertex-color vertex-saturation q))
+
+
+(define alloc-registers (list (Reg 'rbx) (Reg 'rcx) (Reg 'rdx) (Reg 'rsi) (Reg 'rdi) (Reg 'r8) (Reg 'r9)
+                           (Reg 'r10) (Reg 'r11) (Reg 'r12) (Reg 'r13) (Reg 'r14) (Reg 'r15)))
+
+(define (allocate-reg-imm imm var-reg-map)
+  (match imm
+    [(Imm int) (Imm int)]
+    [(Reg reg) (Reg reg)]
+    [(Var x)
+     (if (isReg? (dict-ref var-reg-map imm))
+         (dict-ref var-reg-map imm)
+         (Deref 'rbp (* -8 (dict-ref var-reg-map imm))))]))
+
+(define (allocate-reg-instr i var-reg-map)
+  (match i
+    [(Instr op (list e1)) (Instr op (list (allocate-reg-imm e1 var-reg-map)))]
+    [(Instr op (list e1 e2)) (Instr op (list (allocate-reg-imm e1 var-reg-map) (allocate-reg-imm e2 var-reg-map)))]
+    [_ i]))
+
+;; allocate registers
+(define (allocate-registers p)
+  (match p
+    [(X86Program info body)
+     (X86Program info (for/list ([blk body])
+                        (match blk
+                          [(cons label (Block bl-info bl-body))
+                           (define g (dict-ref bl-info 'conflicts))
+                           (define init-color (gen-init-vertex-color g))
+                           (define init-saturation (gen-init-saturation g init-color))
+                           (define final-colors (color-graph g init-color init-saturation))
+                           (display "\n\n")
+                           (display (get-vertices g))
+                           ;(display "\n")
+                           ;(display (dict-ref info 'locals-types))
+                           (display "\n\n")
+                           ;(display label)
+                           ;(display "\n")
+                           (display final-colors)
+                           (display "\n\n\n")
+                           (define vertices (get-vertices g))
+                           (define variables (filter isVar? vertices))
+                           (define var-reg-map
+                             (map (lambda (v)
+                                    (if (< (dict-ref final-colors v) (length alloc-registers))
+                                        (cons v (list-ref alloc-registers (dict-ref final-colors v)))
+                                        (cons v (- (dict-ref final-colors v) (- (length alloc-registers) 1))))) variables))
+                           
+                           ;(display var-reg-map)
+                           (cons label (Block bl-info (for/list ([e bl-body]) (allocate-reg-instr e var-reg-map))))])
+                        ))]))
 
 
 (define (calculate_stack_frame ls)
   (cond
     [(eq? (remainder (length ls) 16) 0) (* 8 (length ls))]
-    [else (* 8 (+ (length ls) 1))]
-    )
-  )
+    [else (* 8 (+ (length ls) 1))]))
 
 (define (f_i v ls)
   (cond
    [(eq? (length ls) 0) 0] 
    [(eq? v (car (car ls))) 1]
-   [else (+ 1 (f_i v (cdr ls)))]
-   )
-  )
+   [else (+ 1 (f_i v (cdr ls)))]))
 
 
 (define (assign_homes_imm imm ls)
   (match imm
     [(Imm int) (Imm int)]
     [(Reg reg) (Reg reg)]
-    [(Var x) (Deref 'rbp (* -8 (f_i x ls)))]
-    )
-  )
+    [(Var x) (Deref 'rbp (* -8 (f_i x ls)))]))
 
 (define (assign_homes_instr i ls)
   (match i
     [(Instr op (list e1)) (Instr op (list (assign_homes_imm e1 ls)))]
     [(Instr op (list e1 e2)) (Instr op (list (assign_homes_imm e1 ls) (assign_homes_imm e2 ls)))]
-    [_ i]
-    )
-  )
+    [_ i]))
 
 (define (assign_homes_block b ls)
   (match b
-    [(Block info es) (Block info (for/list ([e es]) (assign_homes_instr e ls)))]
-    )
-  )
+    [(Block info es) (Block info (for/list ([e es]) (assign_homes_instr e ls)))]))
 
 ;; assign-homes : pseudo-x86 -> pseudo-x86
 (define (assign-homes p)
@@ -372,11 +511,7 @@
      (for/list ([blk body])
        (match blk
          [`(,label . ,block) (cons label (assign_homes_block block  (dict-ref info 'locals-types)))]
-         ))
-     )
-     ]
-  )
-  )
+         )))]))
 
 (define (patch_instr  instr)
   (match instr
@@ -445,8 +580,9 @@
      ("instruction selection" ,select-instructions ,interp-x86-0)
      ("uncover live", uncover-live, interp-x86-0)
      ("build interference", build-interference, interp-x86-0)
-     ("assign homes" ,assign-homes ,interp-x86-0)
-     ("patch instructions" ,patch-instructions ,interp-x86-0)
-     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
+     ("allocate registers", allocate-registers ,interp-x86-0)
+     ; ("assign homes" ,assign-homes ,interp-x86-0)
+     ; ("patch instructions" ,patch-instructions ,interp-x86-0)
+     ; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
 
