@@ -176,11 +176,7 @@
 (define (explicate-control p)
   (match p
     [(Program info body)
-
-     (define cpro (CProgram info `((start . ,(explicate_tail body)))))
-     (display cpro)
-     (display "\n\n\n")
-     (type-check-Cvar cpro)]))
+     (type-check-Cvar  (CProgram info `((start . ,(explicate_tail body)))))]))
 
 
 (define (select_instructions_atm a)
@@ -214,9 +210,7 @@
   (match e
     [(Seq stmt e*) (append (select_instructions_stmt stmt) (select_instructions_tail e*))]
     [(Return (Prim 'read '())) (list (Callq 'read_int 1) (Jmp 'conclusion))]
-    [(Return x) (append (assign_helper (Reg 'rax) x) (list (Jmp 'conclusion)))]
-    )
-  )
+    [(Return x) (append (assign_helper (Reg 'rax) x) (list (Jmp 'conclusion)))]))
 
 
 
@@ -224,10 +218,7 @@
 (define (select-instructions p)
   (match p
     [(CProgram info `((start . ,block)))
-     (define instr (X86Program info (list (cons 'start (Block '() (select_instructions_tail block))))))
-     (display instr)
-     (display "\n\n\n")
-     instr]))
+     (X86Program info (list (cons 'start (Block '() (select_instructions_tail block)))))]))
 
 
 (define (get-loc e)
@@ -275,7 +266,6 @@
      (define cur-instr (car instr))
      (define instr-read (get-read cur-instr))
      (define instr-write (get-write cur-instr))
-     ; (display  l-after)
      (uncover-live-instr (cdr instr)
                          (cons
                           (set-union (set-subtract (car l-after) instr-write) instr-read)
@@ -287,10 +277,6 @@
     [(cons label (Block info block-body))
      (define reverse-blk-body (reverse block-body))
      (define l-block (uncover-live-instr reverse-blk-body (list (set)) label->live))
-     (display l-block)
-     (display "\n\n\n")
-   
-     ;;(cons label (Block (dict-set info 'live-after (reverse l-block)) block-body))])) Should not be reversed
      (cons label (Block (dict-set info 'live-after l-block) block-body))]))
 
 
@@ -327,18 +313,7 @@
   (match blk
     [(cons label (Block info block-body))
      (define live-after (dict-ref info 'live-after))
-     (display "lengths\n")
-     (display (length block-body))
-     (display " ")
-     (display (length live-after))
-     (display "\n\n")
-     ;; Note here the lengths dont match blk has 1 element less than live
-     ;; this is fine!!
-     ;; we have to ignore the first element of the live-after
      (define inter-graph (build-interference-instr block-body (cdr live-after) (undirected-graph '())))
-     ;;(define inter-graph (build-interference-instr block-body live-after (undirected-graph '())))
-     (print-graph inter-graph)
-     (display "\n\n\n")
      (cons label (Block (dict-set info 'conflicts inter-graph) block-body))]))
 
 
@@ -452,15 +427,6 @@
                            (define init-color (gen-init-vertex-color g))
                            (define init-saturation (gen-init-saturation g init-color))
                            (define final-colors (color-graph g init-color init-saturation))
-                           (display "\n\n")
-                           (display (get-vertices g))
-                           ;(display "\n")
-                           ;(display (dict-ref info 'locals-types))
-                           (display "\n\n")
-                           ;(display label)
-                           ;(display "\n")
-                           (display final-colors)
-                           (display "\n\n\n")
                            (define vertices (get-vertices g))
                            (define variables (filter isVar? vertices))
                            (define var-reg-map
@@ -468,10 +434,7 @@
                                     (if (< (dict-ref final-colors v) (length alloc-registers))
                                         (cons v (list-ref alloc-registers (dict-ref final-colors v)))
                                         (cons v (- (dict-ref final-colors v) (- (length alloc-registers) 1))))) variables))
-                           
-                           ;(display var-reg-map)
-                           (cons label (Block bl-info (for/list ([e bl-body]) (allocate-reg-instr e var-reg-map))))])
-                        ))]))
+                           (cons label (Block bl-info (for/list ([e bl-body]) (allocate-reg-instr e var-reg-map))))])))]))
 
 
 (define (calculate_stack_frame ls)
