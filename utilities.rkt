@@ -2211,7 +2211,7 @@ Changelog:
 (define (get-value-or-fail command output)
   (match (process command)
     [`(,in1 ,out ,_ ,inErr ,control-fun)
-     (let* ([timeout 3.0]
+     (let* ([timeout 10.0]
 	    [res (wait-or-timeout control-fun timeout)]
 	    [result (cond [(symbol=? res 'timed-out)
                            `(error timed-out ,timeout)]
