@@ -302,6 +302,24 @@
        (append mov_rax
                `(,(Instr 'cmpq `(,a2 ,a1))  ,(Instr 'set `(l ,(Reg 'al)))  
                  ,(Instr 'movzbq `(,(Reg 'al) ,(Var x))))))]
+    [(Assign (Var x) (Prim '<= `(,a1 ,a2))) 
+     (let-values ([(mov_rax a1) (cmp_helper a1)]
+                  [(a2) (select_instructions_atm a2)])
+       (append mov_rax
+               `(,(Instr 'cmpq `(,a2 ,a1))  ,(Instr 'set `(le ,(Reg 'al)))  
+                 ,(Instr 'movzbq `(,(Reg 'al) ,(Var x))))))]
+    [(Assign (Var x) (Prim '> `(,a1 ,a2))) 
+     (let-values ([(mov_rax a1) (cmp_helper a1)]
+                  [(a2) (select_instructions_atm a2)])
+       (append mov_rax
+               `(,(Instr 'cmpq `(,a2 ,a1))  ,(Instr 'set `(g ,(Reg 'al)))  
+                 ,(Instr 'movzbq `(,(Reg 'al) ,(Var x))))))]
+    [(Assign (Var x) (Prim '>= `(,a1 ,a2))) 
+     (let-values ([(mov_rax a1) (cmp_helper a1)]
+                  [(a2) (select_instructions_atm a2)])
+       (append mov_rax
+               `(,(Instr 'cmpq `(,a2 ,a1))  ,(Instr 'set `(ge ,(Reg 'al)))  
+                 ,(Instr 'movzbq `(,(Reg 'al) ,(Var x))))))]
     [(Assign x e) (assign_helper x e)]
     [else (error "select instructions stmt " stmt)]
     )
@@ -323,6 +341,21 @@
                   [(a2) (select_instructions_atm a2)])
        (append mov_rax
                `(,(Instr 'cmpq `(,a2 ,a1)) ,(JmpIf 'l l1) ,(Jmp l2))))]
+    [(IfStmt (Prim '<= `(,a1 ,a2))  (Goto l1) (Goto l2))
+     (let-values ([(mov_rax a1) (cmp_helper a1)]
+                  [(a2) (select_instructions_atm a2)])
+       (append mov_rax
+               `(,(Instr 'cmpq `(,a2 ,a1)) ,(JmpIf 'le l1) ,(Jmp l2))))]
+    [(IfStmt (Prim '> `(,a1 ,a2))  (Goto l1) (Goto l2))
+     (let-values ([(mov_rax a1) (cmp_helper a1)]
+                  [(a2) (select_instructions_atm a2)])
+       (append mov_rax
+               `(,(Instr 'cmpq `(,a2 ,a1)) ,(JmpIf 'g l1) ,(Jmp l2))))]
+    [(IfStmt (Prim '>= `(,a1 ,a2))  (Goto l1) (Goto l2))
+     (let-values ([(mov_rax a1) (cmp_helper a1)]
+                  [(a2) (select_instructions_atm a2)])
+       (append mov_rax
+               `(,(Instr 'cmpq `(,a2 ,a1)) ,(JmpIf 'ge l1) ,(Jmp l2))))]
     [else (error "select instructions tail " e)]
     ))
 
@@ -748,25 +781,6 @@
     [(Prim 'or `(,e1 ,e2))  (let ([e1 (shrink-exp e1)]
                                   [e2 (shrink-exp e2)])
                                   (If e1 (Bool #t) e2))]
-    [(Prim 'not `(,e)) (let ([e (shrink-exp e)]) (Prim 'not `(,e)))]
-    [(Prim '< es) (Prim '<  (map shrink-exp es))] 
-    [(Prim 'eq? es) (Prim 'eq?  (map shrink-exp es))]
-    ; <=, >, >=
-    [(Prim '<= `(,e1 ,e2)) (let ([v (gensym 'shrink_le)]
-                                 [e1 (shrink-exp e1)]
-                                 [e2 (shrink-exp e2)])
-                          (shrink-exp
-                            (Let v e1
-                                  (Prim 'not
-                                        `(,(Prim '< `(,e2 ,(Var v))))))))]
-    [(Prim '> `(,e1 ,e2)) (let ([e1 (shrink-exp e1)] [e2 (shrink-exp e2)]) 
-                            (shrink-exp (Prim 'not `(,(Prim '<= `(,e1 ,e2))))))]
-    [(Prim '>= `(,e1 ,e2))
-     (let ([e1 (shrink-exp e1)]
-           [e2 (shrink-exp e2)])
-       (Prim 'not `(,(Prim `< `(,e1 ,e2)))))]                      
-   ; [(Prim op (list e1 e2)) (Prim op (list (shrink-exp e1) (shrink-exp e2)))]
-   ; [(Prim op e1) (Prim op (shrink-exp e1))]
     [(Prim op es)
        (Prim op (for/list ([ex es]) (shrink-exp ex)))]
     [_ e]
