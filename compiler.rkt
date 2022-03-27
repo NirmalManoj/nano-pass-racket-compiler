@@ -9,6 +9,7 @@
 (require "interp.rkt")
 (require "utilities.rkt")
 (require "type-check-Cvar.rkt")
+(require "multigraph.rkt")
 (provide (all-defined-out))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -220,11 +221,23 @@
     [(CProgram info `((start . ,block)))
      (X86Program info (list (cons 'start (Block '() (select_instructions_tail block)))))]))
 
+(define (get-parent-reg r)
+  (match r
+  [(ByteReg 'al) (Reg 'rax)]
+  [(ByteReg 'ah) (Reg 'rax)]
+  [(ByteReg 'bl) (Reg 'rbx)]
+  [(ByteReg 'bh) (Reg 'rbx)]
+  [(ByteReg 'cl) (Reg 'rcx)]
+  [(ByteReg 'ch) (Reg 'rcx)]
+  [(ByteReg 'dl) (Reg 'rdx)]
+  [(ByteReg 'dh) (Reg 'rdx)]
+  [else r]))
 
 (define (get-loc e)
   (match e
     [(Var p) (set e)]
     [(Reg p) (set e)]
+    [(ByteReg p) (set (get-parent-reg e))]
     [else (set)]))
 
 (define caller-saved (list (Reg 'rax) (Reg 'rcx) (Reg 'rdx) (Reg 'rsi) (Reg 'rdi) (Reg 'r8) (Reg 'r9)
@@ -243,7 +256,11 @@
   (match instr
   [(Instr 'addq (list a b)) (set-union (get-loc a) (get-loc b))]
   [(Instr 'negq (list a))(set-union (get-loc a))]
+  [(Instr 'xorq (list a b)) (set-union (get-loc a) (get-loc b))]
+  [(Instr 'subq (list a b)) (set-union (get-loc a) (get-loc b))]
   [(Instr 'movq (list a b))(set-union (get-loc a))]
+  [(Instr 'movzbq (list a b))(set-union (get-loc a))]
+  [(Instr 'cmpq (list a b)) (set-union (get-loc a) (get-loc b))]
   [(Callq label arity) (list->set (get-k-el arguments arity))]
   [else (set)]))
 
@@ -252,6 +269,10 @@
   [(Instr 'addq (list a b)) (set-union (get-loc b))]
   [(Instr 'negq (list a))(set-union (get-loc a))]
   [(Instr 'movq (list a b))(set-union (get-loc b))]
+  [(Instr 'movzbq (list a b))(set-union (get-loc b))]
+  [(Instr 'subq (list a b)) (set-union (get-loc b))]
+  [(Instr 'xorq (list a b)) (set-union (get-loc b))]
+  [(Instr 'set (list cc b)) (set-union (get-loc b))]
   [(Callq label arity) (list->set caller-saved)]
   [else (set)]))
 
@@ -260,6 +281,9 @@
   (match instr
     ['()  l-after]
     [`(,(Jmp label) . ,rest)
+     (define jmp-after (dict-ref label->live label))
+     (uncover-live-instr rest (cons (set-union jmp-after (car l-after)) l-after) label->live)]
+    [`(,(JmpIf _ label) . ,rest)
      (define jmp-after (dict-ref label->live label))
      (uncover-live-instr rest (cons (set-union jmp-after (car l-after)) l-after) label->live)]
     [else
@@ -272,12 +296,25 @@
                           l-after)
                          label->live)]))
 
-(define (uncover-live-block blk label->live)
-  (match blk
-    [(cons label (Block info block-body))
-     (define reverse-blk-body (reverse block-body))
-     (define l-block (uncover-live-instr reverse-blk-body (list (set)) label->live))
-     (cons label (Block (dict-set info 'live-after l-block) block-body))]))
+(define (uncover-live-block blk-body label->live)
+    (define reverse-blk-body (reverse blk-body))
+    (uncover-live-instr reverse-blk-body (list (set)) label->live))
+
+
+(define (add-edge-block body g)
+  (if (empty? body) g
+      (let* ([cur-label-blk (car body)])
+        (match cur-label-blk
+          [(cons cur-blk-label (Block info cur-blk-body))
+           (for/list ([instr cur-blk-body])
+             (match instr
+               [(Jmp 'conclusion) (void)]
+               [(JmpIf _ 'conclusion) (void)]
+               [(Jmp dest-label) (add-directed-edge! g cur-blk-label dest-label)]
+               [(JmpIf _ dest-label) (add-directed-edge! g cur-blk-label dest-label)]
+               [else (void)]))
+           (add-edge-block (cdr body) g)]))))
+
 
 
 ;; Liveliness Analysis
@@ -285,7 +322,23 @@
   (match p
     [(X86Program info body)
      (define label->live `((conclusion  . ,(set (Reg 'rax) (Reg 'rsp)))))
-     (X86Program info (for/list ([blk body]) (uncover-live-block blk label->live)))]))
+     ;; topsport -> update body
+     (define labels (dict-keys body))
+     (define g (make-multigraph '()))
+     (for/list ([l labels]) (add-vertex! g l))
+     (define block-graph (add-edge-block body g))
+     (define order (tsort (transpose block-graph)))
+     (define ordered-body
+       (map (lambda (label)
+              (cons label (dict-ref body label)))
+            order))
+     (define blk-body (for/list ([blk ordered-body])
+                        (match blk
+                          [(cons blk-label (Block info block-body))
+                           (define blk-live-after (uncover-live-block block-body label->live))
+                           (set! label->live (dict-set label->live blk-label (car blk-live-after)))
+                           (cons blk-label (Block (dict-set info 'live-after blk-live-after) block-body))])))
+     (X86Program (dict-set info 'label->live label->live) blk-body)]))
 
 
 (define (build-interference-instr instr-list live-list graph)
@@ -300,6 +353,19 @@
        (when (and (not (equal? a l)) (not (equal? b l)))
            (add-edge! graph b l)))    
      (build-interference-instr (cdr instr-list) (cdr live-list) graph)]
+    
+    [`(,(Instr movzbq (list a b)) . ,rest)
+     (define current-live (car live-list))
+     (define parent_a (get-parent-reg a))
+     (define parent_b (get-parent-reg b))
+     (when (or (isVar? parent_a) (isReg? parent_a)) (add-vertex! graph parent_a))
+     (when (or (isVar? parent_b) (isReg? parent_b)) (add-vertex! graph parent_b))
+     (for ([l current-live])
+       (add-vertex! graph l)
+       (when (and (not (equal? parent_a l)) (not (equal? parent_b l)))
+           (add-edge! graph parent_b l)))    
+     (build-interference-instr (cdr instr-list) (cdr live-list) graph)]
+    
     [else
      (define current-live (car live-list))
      (define current-writes (get-write (car instr-list)))
@@ -353,6 +419,11 @@
 (define (isReg? p)
   (match p
     [(Reg _) #t]
+    [else #f]))
+
+(define (isByteReg? p)
+  (match p
+    [(ByteReg _) #t]
     [else #f]))
 
 (define (isVar? p)
@@ -468,9 +539,16 @@
 (define (patch_instr  instr)
   (match instr
     [(Instr 'movq (list s s)) (list)] ;; new update to remove redundant moves
+    [(Instr 'movzbq (list s s)) (list)] ;; same
+    [(Instr 'movzbq (list a (Deref  reg offset))) ;; target must be a reg
+     (list (Instr 'movzbq (list a (Reg 'rax)))
+           (Instr 'movq (list (Reg 'rax) (Deref  reg offset))))]
     [(Instr op (list (Deref  reg1 offset1) (Deref reg2 offset2)))
          (list (Instr 'movq (list (Deref reg1 offset1) (Reg 'rax)))
                (Instr op (list (Reg 'rax) (Deref reg2 offset2))))]
+    [(Instr 'compq (list a (Imm b))) ;; target must not be Imm
+     (list (Instr 'movq (list (Imm b) (Reg 'rax)))
+           (Instr 'compq (list a (Reg 'rax))))]
     [else (list instr)]))
 
 (define (patch_block block)
@@ -546,6 +624,5 @@
      ("allocate registers", allocate-registers ,interp-x86-0)
      ; ("assign homes" ,assign-homes ,interp-x86-0)
      ("patch instructions" ,patch-instructions ,interp-x86-0)
-     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
-     ))
+     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)))
 
