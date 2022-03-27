@@ -9,7 +9,7 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; type-check-Lif
-
+(define p1 (Program '() (Let 'x (Bool #t) (Int 42))))
 (define type-check-Lif-class
   (class type-check-Lvar-class
     (super-new)

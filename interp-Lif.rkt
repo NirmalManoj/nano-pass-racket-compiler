@@ -63,9 +63,12 @@
         [else ((super interp-exp env) e)]
         ))
     ))
-
+;(define p1 (Program '() (Let 'x (Bool #t) (Int 42))))
 (define (interp-Lif p)
+  ; (displayln p)
   (send (new interp-Lif-class) interp-program p))
+
+
 
 #;(define (interp-exp env)
   (send (new interp-Lif-class) interp-exp env))
