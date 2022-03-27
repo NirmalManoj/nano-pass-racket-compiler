@@ -437,47 +437,48 @@
                            (cons label (Block bl-info (for/list ([e bl-body]) (allocate-reg-instr e var-reg-map))))])))]))
 
 
-(define (calculate_stack_frame ls)
-  (cond
-    [(eq? (remainder (length ls) 16) 0) (* 8 (length ls))]
-    [else (* 8 (+ (length ls) 1))]))
+;;; (define (calculate_stack_frame ls)
+;;;   (cond
+;;;     [(eq? (remainder (length ls) 16) 0) (* 8 (length ls))]
+;;;     [else (* 8 (+ (length ls) 1))]))
 
-(define (f_i v ls)
-  (cond
-   [(eq? (length ls) 0) 0] 
-   [(eq? v (car (car ls))) 1]
-   [else (+ 1 (f_i v (cdr ls)))]))
+;;; (define (f_i v ls)
+;;;   (cond
+;;;    [(eq? (length ls) 0) 0]
+;;;    [(eq? v (car (car ls))) 1]
+;;;    [else (+ 1 (f_i v (cdr ls)))]))
 
 
-(define (assign_homes_imm imm ls)
-  (match imm
-    [(Imm int) (Imm int)]
-    [(Reg reg) (Reg reg)]
-    [(Var x) (Deref 'rbp (* -8 (f_i x ls)))]))
+;;; (define (assign_homes_imm imm ls)
+;;;   (match imm
+;;;     [(Imm int) (Imm int)]
+;;;     [(Reg reg) (Reg reg)]
+;;;     [(Var x) (Deref 'rbp (* -8 (f_i x ls)))]))
 
-(define (assign_homes_instr i ls)
-  (match i
-    [(Instr op (list e1)) (Instr op (list (assign_homes_imm e1 ls)))]
-    [(Instr op (list e1 e2)) (Instr op (list (assign_homes_imm e1 ls) (assign_homes_imm e2 ls)))]
-    [_ i]))
+;;; (define (assign_homes_instr i ls)
+;;;   (match i
+;;;     [(Instr op (list e1)) (Instr op (list (assign_homes_imm e1 ls)))]
+;;;     [(Instr op (list e1 e2)) (Instr op (list (assign_homes_imm e1 ls) (assign_homes_imm e2 ls)))]
+;;;     [_ i]))
 
-(define (assign_homes_block b ls)
-  (match b
-    [(Block info es) (Block info (for/list ([e es]) (assign_homes_instr e ls)))]))
+;;; (define (assign_homes_block b ls)
+;;;   (match b
+;;;     [(Block info es) (Block info (for/list ([e es]) (assign_homes_instr e ls)))]))
 
-;; assign-homes : pseudo-x86 -> pseudo-x86
-(define (assign-homes p)
-  (match p
-    [(X86Program info body)
-    ; (Assign info (dict-set info 'locals-types '()))
-     (X86Program (dict-set info 'stack-space (calculate_stack_frame (dict-ref info 'locals-types)))
-     (for/list ([blk body])
-       (match blk
-         [`(,label . ,block) (cons label (assign_homes_block block  (dict-ref info 'locals-types)))]
-         )))]))
+;;; ;; assign-homes : pseudo-x86 -> pseudo-x86
+;;; (define (assign-homes p)
+;;;   (match p
+;;;     [(X86Program info body)
+;;;     ; (Assign info (dict-set info 'locals-types '()))
+;;;      (X86Program (dict-set info 'stack-space (calculate_stack_frame (dict-ref info 'locals-types)))
+;;;      (for/list ([blk body])
+;;;        (match blk
+;;;          [`(,label . ,block) (cons label (assign_homes_block block  (dict-ref info 'locals-types)))]
+;;;          )))]))
 
 (define (patch_instr  instr)
   (match instr
+    [(Instr 'movq (list s s)) (list)] ;; new update to remove redundant moves
     [(Instr op (list (Deref  reg1 offset1) (Deref reg2 offset2)))
          (list (Instr 'movq (list (Deref reg1 offset1) (Reg 'rax)))
                (Instr op (list (Reg 'rax) (Deref reg2 offset2))))]
@@ -545,7 +546,7 @@
      ("build interference", build-interference, interp-x86-0)
      ("allocate registers", allocate-registers ,interp-x86-0)
      ; ("assign homes" ,assign-homes ,interp-x86-0)
-     ; ("patch instructions" ,patch-instructions ,interp-x86-0)
+     ("patch instructions" ,patch-instructions ,interp-x86-0)
      ; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
 
