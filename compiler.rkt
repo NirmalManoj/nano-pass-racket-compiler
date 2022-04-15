@@ -2,10 +2,13 @@
 (require racket/set racket/stream)
 (require racket/fixnum)
 (require graph)
+(require data/queue)
 (require "priority_queue.rkt")
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
 (require "interp-Cif.rkt")
+(require "interp-Lwhile.rkt")
+(require "interp-Cwhile.rkt")
 (require "interp.rkt")
 (require "utilities.rkt")
 (require "type-check-Cvar.rkt")
@@ -13,6 +16,8 @@
 (require "type-check-Cif.rkt")
 (require "interp-Lif.rkt")
 (require "type-check-Lif.rkt")
+(require "type-check-Lwhile.rkt")
+(require "type-check-Cwhile.rkt")
 (provide (all-defined-out))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -113,12 +118,51 @@
          (Let x_new ((uniquify-exp env) e) ((uniquify-exp env_new) body))
          )]
       [(Prim op es)
-       (Prim op (for/list ([e es]) ((uniquify-exp env) e)))])))
+       (Prim op (for/list ([e es]) ((uniquify-exp env) e)))]
+      [(Begin es body) (Begin (for/list ([e es]) ((uniquify-exp env) e)) ((uniquify-exp env) body))]
+      [(SetBang x exp) (SetBang (dict-ref env x) ((uniquify-exp env) exp))]
+      [(WhileLoop cond body) (WhileLoop ((uniquify-exp env) cond) ((uniquify-exp env) body))])))
 
 ;; uniquify : R1 -> R1
 (define (uniquify p)
   (match p
     [(Program info e) (Program info ((uniquify-exp '()) e))]))
+
+
+(define (collect-set! e)
+  (match e
+    [(Var x) (set)]
+    [(Int x) (set)]
+    [(Bool x) (set)]
+    [(Let x rhs body) (set-union (collect-set! rhs) (collect-set! body))]
+    [(SetBang var rhs) (set-union (set var) (collect-set! rhs))]
+    [(If c t e) (set-union (collect-set! c) (collect-set! t) (collect-set! e))]
+    [(Prim op es) (foldl (lambda (i l) (set-union l (collect-set! i))) (set) es)]
+    [(Begin es body) (set-union (foldl (lambda (i l) (set-union l (collect-set! i))) (set) es) (collect-set! body))]
+    [(WhileLoop cond body) (set-union (collect-set! cond) (collect-set! body))]))
+
+(define (uncover-get!-instr set!-vars instr)
+  (match instr
+    [(Var x)
+     (if (set-member? set!-vars x)
+         (GetBang x)
+         (Var x))]
+    [(Let x rhs body)
+     (Let x (uncover-get!-instr set!-vars rhs)  (uncover-get!-instr set!-vars body))]
+    [(If c t e)
+     (If  (uncover-get!-instr set!-vars c)  (uncover-get!-instr set!-vars t)  (uncover-get!-instr set!-vars e))]
+    [(Prim op es) (Prim op (map (lambda (i) (uncover-get!-instr set!-vars i)) es))]
+    [(SetBang var exp) (SetBang var (uncover-get!-instr set!-vars exp))]
+    [(Begin es body) (Begin (for/list ([e es]) (uncover-get!-instr set!-vars e)) (uncover-get!-instr set!-vars body))]
+    [(WhileLoop cond body) (WhileLoop (uncover-get!-instr set!-vars cond) (uncover-get!-instr set!-vars body))]
+    [else instr]))
+
+(define (uncover-get! p)
+  (match p
+    [(Program info e)
+     (define set!-vars (collect-set! e))
+     (display set!-vars)
+     (Program info (uncover-get!-instr set!-vars e))]))
 
 (define (rco_atom e)
   (match e
@@ -139,6 +183,12 @@
      (define complete_env (append* es_env))
      (define return_env (append complete_env `((,tmp_var . ,(Prim op es_var)))))
      (values (Var tmp_var) return_env)]
+    [(GetBang x)
+     (define tmp_var (gensym))
+     (values (Var tmp_var) `((,tmp_var . ,(Var x))))]
+    [(Begin es body)
+     (define tmp_var (gensym 'begin_))
+     (values (Var tmp_var) `((,tmp_var . ,(Begin (for/list ([e es]) (rco_exp e)) (rco_exp body)))))]
     [else (error "rco_atom unhandled case" e)]))
 
 (define (rco_exp e)
@@ -161,6 +211,10 @@
        (for/lists (e_var e_env) ([e es]) (rco_atom e)))
      (define complete_env (append* es_env))
      (helper_write_lets complete_env (Prim op es_var))]
+    [(Begin es body) (Begin (for/list ([e es]) (rco_exp e)) (rco_exp body))]
+    [(SetBang var exp) (SetBang var (rco_exp exp))]
+    [(WhileLoop cond body) (WhileLoop (rco_exp cond) (rco_exp body))]
+    [(GetBang var) (GetBang var)]
     [else (error "rco_exp unhandled case" e)]))
 
 
@@ -179,10 +233,7 @@
        (let ([label (gensym 'block)])
          ; (set! basic-blocks (cons (cons label tail) basic-blocks))
          (dict-set! basic-blocks label t)
-         (Goto label))]
-    )
-  )
-)
+         (Goto label))])))
 
 (define (explicate_pred c t e basic-blocks)
   (match c
@@ -205,9 +256,32 @@
            )
        (explicate_pred c_ t_blk e_blk basic-blocks))]
     [else (error "explicate_pred unhandled case" c)]))
+
+
+;(define (explicate_effect))
+(define (explicate_effect e cont basic-blocks)
+  (match e
+    [(If c t e)
+     (let ([t_blk (create_block (delay (explicate_effect t cont basic-blocks)) basic-blocks)]
+           [e_blk (create_block (delay (explicate_effect e cont basic-blocks)) basic-blocks)])
+           (explicate_pred c t_blk e_blk basic-blocks))]
+    [(Let x rhs body)
+     (define body_exp (explicate_effect body cont basic-blocks))
+     (explicate_assign rhs x body_exp basic-blocks)]
+    [(WhileLoop cnd body)
+     (let* ([goto-loop (gensym 'loop)]
+           [while_body (create_block (explicate_effect body (Goto goto-loop) basic-blocks) basic-blocks)]
+           [condition_body (explicate_pred cnd while_body cont)])
+       (cons (Goto goto-loop) condition_body))]
+    [(SetBang x exp) (explicate_assign x exp cont basic-blocks)]
+    [(Begin es body)
+     (let ([body^ (explicate_effect body cont basic-blocks)])
+           (for/foldr ([cont body^]) ([e es])
+             (explicate_effect e cont basic-blocks)))]
+    [else cont]))
   
 
-
+; explicate-tail
 (define (explicate_tail e basic-blocks)
   (match e
     [(Bool b) (Return (Bool b))]
@@ -221,8 +295,19 @@
      (define body_exp (explicate_tail body basic-blocks))
      (explicate_assign rhs x body_exp basic-blocks)]
     [(Prim op es) (Return (Prim op es))]
+    [(WhileLoop cnd body)
+     (let* ([goto-loop (gensym 'loop)]
+           [while_body (create_block (explicate_effect body (Goto goto-loop) basic-blocks) basic-blocks)]
+           [condition_body (explicate_pred cnd while_body (Return (Void)))])
+       (cons (Goto goto-loop) condition_body))]
+    [(SetBang x exp) (explicate_assign x exp (Return (Void)) basic-blocks)]
+    [(Begin es body)
+     (let ([body^ (explicate_tail body basic-blocks)])
+           (for/foldr ([cont body^]) ([e es])
+             (explicate_effect e cont basic-blocks)))]
     [else (error "explicate_tail unhandled case" e)]))
 
+;explicate-assign
 (define (explicate_assign e x cont basic-blocks)
   (match e
     [(Bool b) (Seq (Assign (Var x) (Bool b)) cont)]
@@ -236,6 +321,10 @@
      (define x_body (explicate_assign body x cont basic-blocks))
      (explicate_assign rhs y x_body basic-blocks)]
     [(Prim op es) (Seq (Assign (Var x) (Prim op es)) (force cont))]
+    [(Begin es body)
+     (define x_body (explicate_assign body x cont basic-blocks))
+     (for/foldr ([cont x_body]) ([e es])
+             (explicate_effect e cont basic-blocks))]
     [else (error "explicate_assign unhandled case" e)]))
 
 ;; explicate-control : R1 -> C0
@@ -246,10 +335,7 @@
          ([basic-blocks (make-hash)]
           [_ (dict-set! basic-blocks 'start (explicate_tail body basic-blocks))])
          (CProgram info (hash->list basic-blocks)) ; Labels to Block list
-       )
-     ]
-    )
-  )
+       )]))
 
 
 (define (select_instructions_atm a)
@@ -464,27 +550,40 @@
            (add-edge-block (cdr body) g)]))))
 
 
+;; Analyze Dataflow
+(define (analyze_dataflow G p_body mapping)
+  (define worklist (make-queue))
+  (for ([v (in-vertices G)])
+    (dict-set! mapping v (set))
+    (enqueue! worklist v))
+  (define trans-G (transpose G))
+  (while (not (queue-empty? worklist))
+         (define node (dequeue! worklist))
+         (define blk (dict-ref p_body node))
+         (define new-live-after (match blk
+                                  [(Block info blk-body)
+                                   (uncover-live-block blk-body mapping)]))
+         (cond [(not (equal? (car new-live-after) (dict-ref mapping node)))
+                (dict-set! mapping node (car new-live-after))
+                (for ([v (in-neighbors G node)])
+                  (enqueue! worklist v))]))
+  mapping)
 
 ;; Liveliness Analysis
 (define (uncover-live p)
   (match p
     [(X86Program info body)
-     (define label->live `((conclusion  . ,(set (Reg 'rax) (Reg 'rsp)))))
-     ;; topsport -> update body
+     (define label->live (make-hash))
+     (dict-set! label->live 'conclusion  (set (Reg 'rax) (Reg 'rsp)))
      (define labels (dict-keys body))
      (define g (make-multigraph '()))
      (for/list ([l labels]) (add-vertex! g l))
      (define block-graph (add-edge-block body g))
-     (define order (tsort (transpose block-graph)))
-     (define ordered-body
-       (map (lambda (label)
-              (cons label (dict-ref body label)))
-            order))
-     (define blk-body (for/list ([blk ordered-body])
+     (set! label->live (analyze_dataflow g body label->live))
+     (define blk-body (for/list ([blk body])
                         (match blk
                           [(cons blk-label (Block info block-body))
                            (define blk-live-after (uncover-live-block block-body label->live))
-                           (set! label->live (dict-set label->live blk-label (car blk-live-after)))
                            (cons blk-label (Block (dict-set info 'live-after blk-live-after) block-body))])))
      (X86Program (dict-set info 'label->live label->live) blk-body)]))
 
@@ -783,6 +882,9 @@
                                   (If e1 (Bool #t) e2))]
     [(Prim op es)
        (Prim op (for/list ([ex es]) (shrink-exp ex)))]
+    [(Begin es body) (Begin (for/list ([e es]) (shrink-exp e)) (shrink-exp body))]
+    [(WhileLoop cond body) (WhileLoop (shrink-exp cond) (shrink-exp body))]
+    [(SetBang x exp) (SetBang x (shrink-exp exp))]
     [_ e]
   )
 )
@@ -817,15 +919,17 @@
 (define compiler-passes
   `(
     ;;;  ("pe-Lvar", pe-Lvar, interp-Lvar)
-     ("shrink", shrink, interp-Lif, type-check-Lif)
-     ("uniquify" ,uniquify ,interp-Lif)
-     ("remove complex opera*" ,remove-complex-opera*, interp-Lif, type-check-Lif)
-     ("explicate control" ,explicate-control , interp-Cif ,type-check-Cif)
-     ("instruction selection" , select-instructions ,interp-pseudo-x86-1)
-     ("uncover live", uncover-live, interp-pseudo-x86-1)
-     ("build interference", build-interference, interp-pseudo-x86-1)
-     ("allocate registers", allocate-registers , interp-pseudo-x86-1)
+     ("shrink", shrink, interp-Lwhile, type-check-Lwhile)
+     ("uniquify" ,uniquify ,interp-Lwhile)
+     ("uncover-get", uncover-get!, interp-Lwhile)
+     ("remove complex opera*" ,remove-complex-opera*, interp-Lwhile, type-check-Lwhile)
+     ("explicate control" ,explicate-control , interp-Cwhile ,type-check-Cwhile)
+     ;("instruction selection" , select-instructions ,interp-pseudo-x86-1)
+     ;("uncover live", uncover-live, interp-pseudo-x86-1)
+     ;("build interference", build-interference, interp-pseudo-x86-1)
+     ;("allocate registers", allocate-registers , interp-pseudo-x86-1)
      ; ("assign homes" ,assign-homes ,interp-x86-0)
-     ("patch instructions" ,patch-instructions , interp-pseudo-x86-1)
-     ("prelude-and-conclusion" ,prelude-and-conclusion , interp-pseudo-x86-1)))
+     ;("patch instructions" ,patch-instructions , interp-pseudo-x86-1)
+     ;("prelude-and-conclusion" ,prelude-and-conclusion , interp-pseudo-x86-1)
+     ))
 
