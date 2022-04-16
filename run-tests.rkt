@@ -29,9 +29,9 @@
           (string=? r (car (string-split p "_"))))
         all-tests)))
 
-(interp-tests "var" type-check-Lwhile compiler-passes interp-Lwhile "var_test" (tests-for "var"))
-(interp-tests "int" type-check-Lwhile compiler-passes interp-Lwhile "int_test" (tests-for "int"))
-(interp-tests "cond" type-check-Lwhile compiler-passes interp-Lwhile "cond_test" (tests-for "cond"))
+;;; (interp-tests "var" #f compiler-passes interp-Lwhile "var_test" (tests-for "var"))
+;;; (interp-tests "int" #f compiler-passes interp-Lwhile "int_test" (tests-for "int"))
+;;; (interp-tests "cond" type-check-Lwhile compiler-passes interp-Lwhile "cond_test" (tests-for "cond"))
 (interp-tests "while" type-check-Lwhile compiler-passes interp-Lwhile "while_test" (tests-for "while"))
 (interp-tests "vec" type-check-Lvec compiler-passes interp-Lvec "vectors_test" (tests-for "vectors"))
 

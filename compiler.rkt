@@ -10,6 +10,7 @@
 (require "interp-Lwhile.rkt")
 (require "interp-Cwhile.rkt")
 (require "interp-Lvec.rkt")
+(require "interp-Lvec-prime.rkt")
 (require "interp.rkt")
 (require "utilities.rkt")
 (require "type-check-Cvar.rkt")
@@ -918,6 +919,70 @@
 
 
 
+; Step 1: sequence of temporary variable bindings for the initializing expressions
+; Step 2: conditional call to collect
+; Step 3: call to allocate
+; Step 4: initialization of the tuple
+
+(define (exp-alloc e)
+   (define (helper_write_lets env exp)
+    (cond
+      [(empty? env) exp]
+      [else
+       (match (car env)
+         [`(,key . ,value) (Let key value (helper_write_lets (cdr env) exp))])]))
+  (match e
+    [(Void) (Void)]
+    [(Bool b) (Bool b)]
+    [(Int i) (Int i)]
+    [(Var v) (Var v)]
+    [(If c t e) (If (exp-alloc c) (exp-alloc t) (exp-alloc e))]
+    [(Let x e b) (Let x (exp-alloc e) (exp-alloc b))]
+    [(HasType (Prim 'vector es) t)
+     (let* ([len (length es)]
+          [v (gensym 'return_v)]
+          [x (map (lambda (i) (gensym 'i)) es)]
+          [es (map exp-alloc es)]
+          [bytes (+ 8 (* len 8))]
+          [alloc (Allocate len t)]
+          [collec (If (Prim '< `(,(Prim '+ `(,(HasType (GlobalValue 'free_ptr) 'Integer) ,(Int bytes)))
+                                ,(HasType (GlobalValue 'fromspace_end) 'Integer)))
+                      (Void)
+                      (Collect bytes))]
+          [v_exps (map (lambda (i)
+                         (Prim 'vector-set! (list (Var v) (Int i) (Var (list-ref x i)))))
+                       (range 0 (length x)))]
+          [all_exprs (foldr (lambda (var exp a)
+                              `((,var . ,exp) . ,a))
+                              '()
+                              (append x (list '_) (list v) (make-list len '_))
+                              (append es (list collec) (list alloc) v_exps)
+                              )])
+          (helper_write_lets all_exprs (Var v))
+     )
+     ]
+    ;;; Primitives
+    ;;; [(Prim 'and `(,e1 ,e2)) (let ([e1 (shrink-exp e1)]
+    ;;;                               [e2 (shrink-exp e2)])
+    ;;;                               (If e1 e2 (Bool #f)))]
+    ;;; [(Prim 'or `(,e1 ,e2))  (let ([e1 (shrink-exp e1)]
+    ;;;                               [e2 (shrink-exp e2)])
+    ;;;                               (If e1 (Bool #t) e2))]
+    [(Prim 'vector-ref `(,t ,(Int i))) (Prim 'vector-ref `(,(exp-alloc t) ,(Int i)))]
+    [(Prim 'vector-set! `(,t ,(Int i) ,e)) (Prim 'vector-set! `(,(exp-alloc t) ,(Int i) ,(exp-alloc e)))]
+    [(Prim op es)
+       (Prim op (for/list ([ex es]) (exp-alloc ex)))]
+    ;;; Primitive end
+    )
+  )
+
+(define (expose-allocation p)
+  (match p
+    [(Program info e) (Program info (exp-alloc e))]
+    )
+  )
+
+
 
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
@@ -941,6 +1006,7 @@
   `(
     ;;;  ("pe-Lvar", pe-Lvar, interp-Lvar)
      ("shrink", shrink, interp-Lvec, type-check-Lvec)
+     ("expose allocation", expose-allocation, interp-Lvec-prime, type-check-Lvec)
     ;;;  ("shrink", shrink, interp-Lwhile, type-check-Lwhile)
     ;;;  ("uniquify" ,uniquify ,interp-Lwhile)
     ;;;  ("uncover-get", uncover-get!, interp-Lwhile)
