@@ -890,6 +890,7 @@
     [(Var v) (Var v)]
     [(If c t e) (If (shrink-exp c) (shrink-exp t) (shrink-exp e))]
     [(Let x e b) (Let x (shrink-exp e) (shrink-exp b))]
+    [(HasType e t) (HasType (shrink-exp e) t)]
     ;;; Primitives
     [(Prim 'and `(,e1 ,e2)) (let ([e1 (shrink-exp e1)]
                                   [e2 (shrink-exp e2)])
