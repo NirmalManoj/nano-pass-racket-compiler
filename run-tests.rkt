@@ -9,7 +9,7 @@
 (require "interp-Lwhile.rkt")
 (require "type-check-Lwhile.rkt")
 
-(debug-level 1)
+;; (debug-level 1)
 ;; (AST-output-syntax 'concrete-syntax)
 
 ;; all the files in the tests/ directory with extension ".rkt".
@@ -34,7 +34,7 @@
 
 ;; Uncomment the following when all the passes are complete to
 ;; test the final x86 code.
-; (compiler-tests "var" #f compiler-passes "var_test" (tests-for "var"))
-; (compiler-tests "int" #f compiler-passes "int_test" (tests-for "int"))
-; (compiler-tests "cond" type-check-Lif compiler-passes "cond_test" (tests-for "cond"))
+(compiler-tests "var" #f compiler-passes "var_test" (tests-for "var"))
+(compiler-tests "int" #f compiler-passes "int_test" (tests-for "int"))
+(compiler-tests "cond" type-check-Lif compiler-passes "cond_test" (tests-for "cond"))
 

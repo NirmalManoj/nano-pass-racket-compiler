@@ -161,7 +161,6 @@
   (match p
     [(Program info e)
      (define set!-vars (collect-set! e))
-     (display set!-vars)
      (Program info (uncover-get!-instr set!-vars e))]))
 
 (define (rco_atom e)
@@ -344,6 +343,7 @@
     [(Var _) a]
     [(Bool #t) (Imm 1)]
     [(Bool #f) (Imm 0)]
+    [(Void) (Imm 0)]
     [else (error "select_instructions_atm failed : " a)]))
 
 
@@ -407,6 +407,7 @@
                `(,(Instr 'cmpq `(,a2 ,a1))  ,(Instr 'set `(ge ,(Reg 'al)))  
                  ,(Instr 'movzbq `(,(Reg 'al) ,(Var x))))))]
     [(Assign x e) (assign_helper x e)]
+    [(Prim 'read '()) (list (Callq 'read_int 1))]
     [else (error "select instructions stmt " stmt)]
     )
   )
@@ -924,12 +925,12 @@
      ("uncover-get", uncover-get!, interp-Lwhile)
      ("remove complex opera*" ,remove-complex-opera*, interp-Lwhile, type-check-Lwhile)
      ("explicate control" ,explicate-control , interp-Cwhile ,type-check-Cwhile)
-     ;("instruction selection" , select-instructions ,interp-pseudo-x86-1)
-     ;("uncover live", uncover-live, interp-pseudo-x86-1)
-     ;("build interference", build-interference, interp-pseudo-x86-1)
-     ;("allocate registers", allocate-registers , interp-pseudo-x86-1)
-     ; ("assign homes" ,assign-homes ,interp-x86-0)
-     ;("patch instructions" ,patch-instructions , interp-pseudo-x86-1)
-     ;("prelude-and-conclusion" ,prelude-and-conclusion , interp-pseudo-x86-1)
+     ("instruction selection" , select-instructions ,interp-pseudo-x86-1)
+     ("uncover live", uncover-live, interp-pseudo-x86-1)
+     ("build interference", build-interference, interp-pseudo-x86-1)
+     ("allocate registers", allocate-registers , interp-pseudo-x86-1)
+     ;("assign homes" ,assign-homes ,interp-x86-0)
+     ("patch instructions" ,patch-instructions , interp-pseudo-x86-1)
+     ("prelude-and-conclusion" ,prelude-and-conclusion , interp-pseudo-x86-1)
      ))
 
