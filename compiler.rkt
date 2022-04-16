@@ -213,7 +213,7 @@
     [(Begin es body) (Begin (for/list ([e es]) (rco_exp e)) (rco_exp body))]
     [(SetBang var exp) (SetBang var (rco_exp exp))]
     [(WhileLoop cond body) (WhileLoop (rco_exp cond) (rco_exp body))]
-    [(GetBang var) (GetBang var)]
+    [(GetBang var) (Var var)]
     [else (error "rco_exp unhandled case" e)]))
 
 
@@ -247,13 +247,17 @@
                           (force (create_block t basic-blocks))
                           (force (create_block e basic-blocks)))]
     [(Let x rhs body)
-     (let ([tail (delay (explicate_pred body t e basic-blocks))])
+     (let ([tail (explicate_pred body t e basic-blocks)])
        (explicate_assign rhs x tail basic-blocks))]
     [(If c_ t_ e_)
      (let ([t_blk (delay (explicate_pred t_ t e basic-blocks))]
            [e_blk (delay (explicate_pred e_ t e basic-blocks))]
            )
        (explicate_pred c_ t_blk e_blk basic-blocks))]
+    [(Begin es body)
+     (let ([body^ (explicate_pred body t e basic-blocks)])
+       (for/foldr ([cont body^]) ([e es])
+             (explicate_effect e cont basic-blocks)))]
     [else (error "explicate_pred unhandled case" c)]))
 
 
@@ -269,10 +273,11 @@
      (explicate_assign rhs x body_exp basic-blocks)]
     [(WhileLoop cnd body)
      (let* ([goto-loop (gensym 'loop)]
-           [while_body (create_block (explicate_effect body (Goto goto-loop) basic-blocks) basic-blocks)]
-           [condition_body (explicate_pred cnd while_body cont)])
-       (cons (Goto goto-loop) condition_body))]
-    [(SetBang x exp) (explicate_assign x exp cont basic-blocks)]
+           [while_body (force (create_block (explicate_effect body (Goto goto-loop) basic-blocks) basic-blocks))]
+           [condition_body (explicate_pred cnd while_body cont basic-blocks)])
+       (dict-set! basic-blocks goto-loop condition_body)
+       (Goto goto-loop))]
+    [(SetBang x exp) (explicate_assign exp x cont basic-blocks)]
     [(Begin es body)
      (let ([body^ (explicate_effect body cont basic-blocks)])
            (for/foldr ([cont body^]) ([e es])
@@ -298,7 +303,8 @@
      (let* ([goto-loop (gensym 'loop)]
            [while_body (create_block (explicate_effect body (Goto goto-loop) basic-blocks) basic-blocks)]
            [condition_body (explicate_pred cnd while_body (Return (Void)))])
-       (cons (Goto goto-loop) condition_body))]
+       (dict-set! basic-blocks goto-loop condition_body)
+       (Goto goto-loop))]
     [(SetBang x exp) (explicate_assign x exp (Return (Void)) basic-blocks)]
     [(Begin es body)
      (let ([body^ (explicate_tail body basic-blocks)])
@@ -363,8 +369,8 @@
                               (Instr 'negq (list regi)))]
     [(Prim '+ (list x1 x2)) (list (Instr 'movq (list (select_instructions_atm x1) regi))
                               (Instr 'addq (list (select_instructions_atm x2) regi)))]
-    )
-  )
+    [(Prim '- (list x1 x2)) (list (Instr 'movq (list (select_instructions_atm x1) regi))
+                              (Instr 'subq (list (select_instructions_atm x2) regi)))]))
 
 (define (select_instructions_stmt stmt)
   (match stmt
@@ -372,6 +378,12 @@
                                          (list (Instr 'addq (list (select_instructions_atm a1) (Var x))))]
     [(Assign (Var x) (Prim '+ `(,a1 (Var ,x1)))) #:when (equal? x x1)
                                          (list (Instr 'addq (list (select_instructions_atm a1) (Var x))))]
+    
+    [(Assign (Var x) (Prim '- `((Var ,x1) ,a1))) #:when (equal? x x1)
+                                         (list (Instr 'subq (list (select_instructions_atm a1) (Var x))))]
+    [(Assign (Var x) (Prim '- `(,a1 (Var ,x1)))) #:when (equal? x x1)
+                                         (list (Instr 'subq (list (select_instructions_atm a1) (Var x) (Instr 'negq (list (Var x))))))]
+    
     [(Assign (Var x) (Prim 'not `(,(Var x)))) `(,(Instr 'xorq `(,(Imm 1) ,(Var x))))] ; pno 75
     [(Assign (Var x) (Prim 'not `(,(Var a)))) 
       `(,(Instr 'movq `(,a ,(Var x)))

@@ -27,14 +27,15 @@
           (string=? r (car (string-split p "_"))))
         all-tests)))
 
-(interp-tests "var" #f compiler-passes interp-Lwhile "var_test" (tests-for "var"))
-(interp-tests "int" #f compiler-passes interp-Lwhile "int_test" (tests-for "int"))
+(interp-tests "var" type-check-Lwhile compiler-passes interp-Lwhile "var_test" (tests-for "var"))
+(interp-tests "int" type-check-Lwhile compiler-passes interp-Lwhile "int_test" (tests-for "int"))
 (interp-tests "cond" type-check-Lwhile compiler-passes interp-Lwhile "cond_test" (tests-for "cond"))
-
+(interp-tests "while" type-check-Lwhile compiler-passes interp-Lwhile "while_test" (tests-for "while"))
 
 ;; Uncomment the following when all the passes are complete to
 ;; test the final x86 code.
 (compiler-tests "var" #f compiler-passes "var_test" (tests-for "var"))
 (compiler-tests "int" #f compiler-passes "int_test" (tests-for "int"))
-(compiler-tests "cond" type-check-Lif compiler-passes "cond_test" (tests-for "cond"))
+(compiler-tests "cond" type-check-Lwhile compiler-passes "cond_test" (tests-for "cond"))
+(compiler-tests "while" type-check-Lwhile compiler-passes "while_test" (tests-for "while"))
 
