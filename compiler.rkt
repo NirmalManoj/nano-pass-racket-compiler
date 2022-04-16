@@ -166,8 +166,13 @@
      (define set!-vars (collect-set! e))
      (Program info (uncover-get!-instr set!-vars e))]))
 
+(define (atom? e)
+  (or (Void? e) (Var? e) (Int? e) (Bool? e))
+)
+
 (define (rco_atom e)
   (match e
+    [(Void) (values Void '())]
     [(Bool b) (values (Bool b) '())]
     [(Var x) (values (Var x) '())]
     [(Int n) (values (Int n) '())]
@@ -178,6 +183,20 @@
      (define rhs_exp (rco_exp rhs))
      (define-values (body_atom body_env) (rco_atom body))
      (values body_atom (append `((,x . ,rhs_exp)) body_env))]
+    [(HasType e t) #:when (atom? e)
+      (values (HasType e t) e)]
+    [(HasType e t) (let-values ([(atm env) (rco_atom e)])
+                    (values (HasType (Var atm) t)
+                    (dict-set env atm (HasType (dict-ref env atm) t))))]
+    [(Collect bytes)
+      (let ([temp (gensym 'collect-bytes)])
+      (values temp `((,temp . ,(Collect bytes)))))]
+    [(Allocate bytes t)
+      (let ([temp (gensym 'allocate-bytes)])
+      (values temp `((,temp . ,(Allocate bytes t)))))]
+    [(GlobalValue x)
+      (let ([temp (gensym 'global-value)])
+      (values temp `((,temp . ,(GlobalValue x)))))]
     [(Prim op es)
      (define tmp_var (gensym))
      (define-values (es_var es_env)
@@ -201,6 +220,7 @@
        (match (car env)
          [`(,key . ,value) (Let key value (helper_write_lets (cdr env) exp))])]))
   (match e
+    [(Void) (Void)]
     [(Bool b) (Bool b)]
     [(Var x) (Var x)]
     [(Int n) (Int n)]
@@ -208,6 +228,10 @@
      (If (rco_exp c) (rco_exp t) (rco_exp e))]
     [(Let x rhs body)
      (Let x (rco_exp rhs) (rco_exp body))]
+    [(HasType e t) (HasType (rco_exp e) t)]
+    [(Collect bytes) (Collect bytes)]
+    [(Allocate bytes t) (Allocate bytes t)]
+    [(GlobalValue x) (GlobalValue (rco_atom x))]
     [(Prim op es)
      (define-values (es_var es_env)
        (for/lists (e_var e_env) ([e es]) (rco_atom e)))
@@ -948,7 +972,7 @@
           [collec (If (Prim '< `(,(Prim '+ `(,(HasType (GlobalValue 'free_ptr) 'Integer) ,(Int bytes)))
                                 ,(HasType (GlobalValue 'fromspace_end) 'Integer)))
                       (Void)
-                      (Collect bytes))]
+                      (Collect (Int bytes)))]
           [v_exps (map (lambda (i)
                          (Prim 'vector-set! (list (Var v) (Int i) (Var (list-ref x i)))))
                        (range 0 (length x)))]
@@ -1010,7 +1034,7 @@
     ;;;  ("shrink", shrink, interp-Lwhile, type-check-Lwhile)
     ;;;  ("uniquify" ,uniquify ,interp-Lwhile)
     ;;;  ("uncover-get", uncover-get!, interp-Lwhile)
-    ;;;  ("remove complex opera*" ,remove-complex-opera*, interp-Lwhile, type-check-Lwhile)
+     ("remove complex opera*", remove-complex-opera*, interp-Lvec-prime, type-check-Lvec)
     ;;;  ("explicate control" ,explicate-control , interp-Cwhile ,type-check-Cwhile)
     ;;;  ("instruction selection" , select-instructions ,interp-pseudo-x86-1)
     ;;;  ("uncover live", uncover-live, interp-pseudo-x86-1)
