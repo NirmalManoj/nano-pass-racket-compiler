@@ -8,6 +8,8 @@
 (require "compiler.rkt")
 (require "interp-Lwhile.rkt")
 (require "type-check-Lwhile.rkt")
+(require "interp-Lvec.rkt")
+(require "type-check-Lvec.rkt")
 
 ;; (debug-level 1)
 ;; (AST-output-syntax 'concrete-syntax)
@@ -31,6 +33,7 @@
 (interp-tests "int" type-check-Lwhile compiler-passes interp-Lwhile "int_test" (tests-for "int"))
 (interp-tests "cond" type-check-Lwhile compiler-passes interp-Lwhile "cond_test" (tests-for "cond"))
 (interp-tests "while" type-check-Lwhile compiler-passes interp-Lwhile "while_test" (tests-for "while"))
+(interp-tests "vec" type-check-Lvec compiler-passes interp-Lvec "vec_test" (tests-for "vec"))
 
 ;; Uncomment the following when all the passes are complete to
 ;; test the final x86 code.

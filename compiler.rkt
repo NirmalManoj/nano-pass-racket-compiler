@@ -9,6 +9,7 @@
 (require "interp-Cif.rkt")
 (require "interp-Lwhile.rkt")
 (require "interp-Cwhile.rkt")
+(require "interp-Lvec.rkt")
 (require "interp.rkt")
 (require "utilities.rkt")
 (require "type-check-Cvar.rkt")
@@ -18,6 +19,7 @@
 (require "type-check-Lif.rkt")
 (require "type-check-Lwhile.rkt")
 (require "type-check-Cwhile.rkt")
+(require "type-check-Lvec.rkt")
 (provide (all-defined-out))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -882,19 +884,24 @@
 
 (define (shrink-exp e)
   (match e
+    [(Void) (Void)]
     [(Bool b) (Bool b)]
     [(Int i) (Int i)]
     [(Var v) (Var v)]
     [(If c t e) (If (shrink-exp c) (shrink-exp t) (shrink-exp e))]
     [(Let x e b) (Let x (shrink-exp e) (shrink-exp b))]
+    ;;; Primitives
     [(Prim 'and `(,e1 ,e2)) (let ([e1 (shrink-exp e1)]
                                   [e2 (shrink-exp e2)])
                                   (If e1 e2 (Bool #f)))]
     [(Prim 'or `(,e1 ,e2))  (let ([e1 (shrink-exp e1)]
                                   [e2 (shrink-exp e2)])
                                   (If e1 (Bool #t) e2))]
+    [(Prim 'vector-ref `(,t ,(Int i))) (Prim 'vector-ref `(,(shrink-exp t) ,(Int i)))]
+    [(Prim 'vector-set! `(,t ,(Int i) ,e)) (Prim 'vector-set! `(,(shrink-exp t) ,(Int i) ,(shrink-exp e)))]
     [(Prim op es)
        (Prim op (for/list ([ex es]) (shrink-exp ex)))]
+    ;;; Primitive end
     [(Begin es body) (Begin (for/list ([e es]) (shrink-exp e)) (shrink-exp body))]
     [(WhileLoop cond body) (WhileLoop (shrink-exp cond) (shrink-exp body))]
     [(SetBang x exp) (SetBang x (shrink-exp exp))]
@@ -932,17 +939,18 @@
 (define compiler-passes
   `(
     ;;;  ("pe-Lvar", pe-Lvar, interp-Lvar)
-     ("shrink", shrink, interp-Lwhile, type-check-Lwhile)
-     ("uniquify" ,uniquify ,interp-Lwhile)
-     ("uncover-get", uncover-get!, interp-Lwhile)
-     ("remove complex opera*" ,remove-complex-opera*, interp-Lwhile, type-check-Lwhile)
-     ("explicate control" ,explicate-control , interp-Cwhile ,type-check-Cwhile)
-     ("instruction selection" , select-instructions ,interp-pseudo-x86-1)
-     ("uncover live", uncover-live, interp-pseudo-x86-1)
-     ("build interference", build-interference, interp-pseudo-x86-1)
-     ("allocate registers", allocate-registers , interp-pseudo-x86-1)
-     ;("assign homes" ,assign-homes ,interp-x86-0)
-     ("patch instructions" ,patch-instructions , interp-pseudo-x86-1)
-     ("prelude-and-conclusion" ,prelude-and-conclusion , interp-pseudo-x86-1)
+     ("shrink", shrink, interp-Lvec, type-check-Lvec)
+    ;;;  ("shrink", shrink, interp-Lwhile, type-check-Lwhile)
+    ;;;  ("uniquify" ,uniquify ,interp-Lwhile)
+    ;;;  ("uncover-get", uncover-get!, interp-Lwhile)
+    ;;;  ("remove complex opera*" ,remove-complex-opera*, interp-Lwhile, type-check-Lwhile)
+    ;;;  ("explicate control" ,explicate-control , interp-Cwhile ,type-check-Cwhile)
+    ;;;  ("instruction selection" , select-instructions ,interp-pseudo-x86-1)
+    ;;;  ("uncover live", uncover-live, interp-pseudo-x86-1)
+    ;;;  ("build interference", build-interference, interp-pseudo-x86-1)
+    ;;;  ("allocate registers", allocate-registers , interp-pseudo-x86-1)
+    ;;;  ;("assign homes" ,assign-homes ,interp-x86-0)
+    ;;;  ("patch instructions" ,patch-instructions , interp-pseudo-x86-1)
+    ;;;  ("prelude-and-conclusion" ,prelude-and-conclusion , interp-pseudo-x86-1)
      ))
 
