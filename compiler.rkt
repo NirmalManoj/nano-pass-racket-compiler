@@ -460,15 +460,22 @@
                                    (let ([rhs (select_instructions_atm rhs)])
                                    (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,rhs ,(Deref 'r11 loc)))
                                          (Instr 'movq `(,(Imm 0) ,(Var x)))))]
+    [(Prim 'vector-set! `(,tup ,(Int n) ,rhs)) (define loc (* 8 (add1 n)))
+                                   (let ([rhs (select_instructions_atm rhs)])
+                                   (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,rhs ,(Deref 'r11 loc)))))]
+    [(Assign (Var x) (Prim 'vector-length tup)) (list (Instr 'movq `(,tup ,(Reg 'r11)))
+                                                      (Instr 'movq `(,(Deref 'r11 0) ,(Var x)))
+                                                      (Instr 'andq `(,(Imm 63) ,(Var x)))
+                                                      (Instr 'sarq `(,(Imm 1) ,(Var x))))]
     [(Assign (Var x) (Allocate len t)) (define loc (* 8 (add1 len)))
                                 (let ([tag (bitwise-ior 1 (arithmetic-shift len 1) (arithmetic-shift (pointer_mask t) 7))])
-                                   (list (Instr 'movq `(,(Global 'free_ptr) ,(Reg 'r11))) (Instr 'addq `(,loc ,(Global 'free_ptr)))
+                                   (list (Instr 'movq `(,(Global 'free_ptr) ,(Reg 'r11))) (Instr 'addq `(,(Imm loc) ,(Global 'free_ptr)))
                                          (Instr 'movq `(,(Imm tag) ,(Deref 'r11 0)))
                                          (Instr 'movq `(,(Reg 'r11) ,(Var x)))
                                          ))]
     [(Assign (Var x) (Collect bytes)) (list (Instr 'movq `(,(Reg 'r15) ,(Reg 'rdi))) (Instr 'movq `(,(Imm bytes) ,(Reg 'rsi))) (Callq 'collect 2)
                                          (Instr 'movq `(,(Imm 0) ,(Var x))))]
-    [(Collect bytes) (list (Instr 'movq `(,(Reg 'r15) ,(Reg 'rdi))) (Instr 'movq `(,bytes ,(Reg 'rsi))) (Callq 'collect 2))]
+    [(Collect bytes) (list (Instr 'movq `(,(Reg 'r15) ,(Reg 'rdi))) (Instr 'movq `(,(select_instructions_atm bytes) ,(Reg 'rsi))) (Callq 'collect 2))]
     [(Assign (Var x) (Prim 'not `(,(Var x)))) `(,(Instr 'xorq `(,(Imm 1) ,(Var x))))] ; pno 75
     [(Assign (Var x) (Prim 'not `(,(Var a)))) 
       `(,(Instr 'movq `(,a ,(Var x)))
@@ -523,6 +530,11 @@
                                    (let ([rhs (select_instructions_atm rhs)])
                                    (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,rhs ,(Deref 'r11 loc)))
                                          (Instr 'movq `(,(Imm 0) ,(Reg 'rax))) (Jmp 'conclusion)))]
+    [(Return (Prim 'vector-length tup)) (list (Instr 'movq `(,tup ,(Reg 'r11)))
+                                                      (Instr 'movq `(,(Deref 'r11 0) ,(Reg 'rax)))
+                                                      (Instr 'andq `(,(Imm 63) ,(Reg 'rax)))
+                                                      (Instr 'sarq `(,(Imm 1) ,(Reg 'rax)))
+                                                      (Jmp 'conclusion))]
     [(Return (Allocate len t)) (define loc (* 8 (add1 len)))
                                 (let ([tag (bitwise-ior 1 (arithmetic-shift len 1) (arithmetic-shift (pointer_mask t) 7))])
                                    (list (Instr 'movq `(,(Global 'free_ptr) ,(Reg 'r11))) (Instr 'addq `(,loc ,(Global 'free_ptr)))
