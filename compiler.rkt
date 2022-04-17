@@ -193,10 +193,9 @@
      (define-values (body_atom body_env) (rco_atom body))
      (values body_atom (append `((,x . ,rhs_exp)) body_env))]
     [(HasType e t) #:when (atom? e)
-      (values (HasType e t) e)]
+      (values e '())]
     [(HasType e t) (let-values ([(atm env) (rco_atom e)])
-                    (values (HasType (Var atm) t)
-                    (dict-set env atm (HasType (dict-ref env atm) t))))]
+                    (values (Var atm) env))]
     [(Collect bytes)
       (let ([temp (gensym 'collect-bytes)])
       (values temp `((,temp . ,(Collect bytes)))))]
