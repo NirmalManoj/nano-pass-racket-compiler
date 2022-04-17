@@ -1,4 +1,4 @@
-(let ([t (vector 40 #f (vector 2))])
+(let ([t (vector 40 #t (vector 2))])
     (if (vector-ref t 1)
         (+ (vector-ref t 0)
             (vector-ref (vector-ref t 2) 0))

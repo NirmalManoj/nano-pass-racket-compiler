@@ -605,9 +605,11 @@
 (define caller-saved (list (Reg 'rax) (Reg 'rcx) (Reg 'rdx) (Reg 'rsi) (Reg 'rdi) (Reg 'r8) (Reg 'r9)
                            (Reg 'r10) (Reg 'r11)))
 
-(define callee-saved (list (Reg 'rsp) (Reg 'rbp) (Reg 'rbx) (Reg 'r12) (Reg 'r13) (Reg 'r14) (Reg 'r15)))
+(define callee-saved (list (Reg 'rsp) (Reg 'rbp) (Reg 'rbx) (Reg 'r12) (Reg 'r13) (Reg 'r14)))
 
 (define arguments (list (Reg 'rdi) (Reg 'rsi) (Reg 'rdx) (Reg 'rcx) (Reg 'r8) (Reg 'r9)))
+
+(define root-stack-reg (Reg 'r15))
 
 (define (get-k-el l k)
   (cond
@@ -716,7 +718,18 @@
      (X86Program (dict-set info 'label->live label->live) blk-body)]))
 
 
-(define (build-interference-instr instr-list live-list graph)
+;; check whether a given element is a vector
+(define (Vector? v locals-types)
+  (match v
+    [(Var x)
+     (match (dict-ref locals-types x)
+       [`(Vector . ,_) #t]
+       [else #f])]
+    [else #f]))
+
+
+
+(define (build-interference-instr instr-list live-list graph locals-types)
   (match instr-list
     ['() graph]
     [`(,(Instr movq (list a b)) . ,rest)
@@ -727,7 +740,7 @@
        (add-vertex! graph l)
        (when (and (not (equal? a l)) (not (equal? b l)))
            (add-edge! graph b l)))    
-     (build-interference-instr (cdr instr-list) (cdr live-list) graph)]
+     (build-interference-instr (cdr instr-list) (cdr live-list) graph locals-types)]
     
     [`(,(Instr movzbq (list a b)) . ,rest)
      (define current-live (car live-list))
@@ -739,7 +752,21 @@
        (add-vertex! graph l)
        (when (and (not (equal? parent_a l)) (not (equal? parent_b l)))
            (add-edge! graph parent_b l)))    
-     (build-interference-instr (cdr instr-list) (cdr live-list) graph)]
+     (build-interference-instr (cdr instr-list) (cdr live-list) graph locals-types)]
+    
+    [(Callq 'collect _)
+     (define current-live (car live-list))
+     (define call-live-vec-list (filter (lambda (v) (Vector? v locals-types)) live-list))
+     (define current-writes (get-write (car instr-list)))
+     (for* ([l current-live]
+            [w current-writes])
+       (add-vertex! graph l)
+       (when (not (equal? l w)) (add-edge! graph l w)))
+     
+     (for* ([v call-live-vec-list]
+            [c callee-saved])
+       (when (not (equal? v c)) (add-edge! graph v c)))
+     (build-interference-instr (cdr instr-list) (cdr live-list) graph locals-types)]
     
     [else
      (define current-live (car live-list))
@@ -748,13 +775,14 @@
             [w current-writes])
        (add-vertex! graph l)
        (when (not (equal? l w)) (add-edge! graph l w)))
-    (build-interference-instr (cdr instr-list) (cdr live-list) graph)]))
+    (build-interference-instr (cdr instr-list) (cdr live-list) graph locals-types)]))
 
-(define (build-interference-block blk)
+
+(define (build-interference-block blk locals-types)
   (match blk
     [(cons label (Block info block-body))
      (define live-after (dict-ref info 'live-after))
-     (build-interference-instr block-body (cdr live-after) (undirected-graph '()))]))
+     (build-interference-instr block-body (cdr live-after) (undirected-graph '()) locals-types)]))
 
 
 ;;build-interference
@@ -762,7 +790,8 @@
   (match p
     [(X86Program info body)
      (define graph (undirected-graph '()))
-     (for/list ([blk body]) (graph-union! graph (build-interference-block blk)))
+     (define locals-types (dict-ref info 'locals-types))
+     (for/list ([blk body]) (graph-union! graph (build-interference-block blk locals-types)))
      (X86Program (dict-set info 'conflicts graph) body)]))
 
 
@@ -846,9 +875,9 @@
 
 
 (define alloc-registers (list (Reg 'rbx) (Reg 'rcx) (Reg 'rdx) (Reg 'rsi) (Reg 'rdi) (Reg 'r8) (Reg 'r9)
-                           (Reg 'r10) (Reg 'r11) (Reg 'r12) (Reg 'r13) (Reg 'r14) (Reg 'r15)))
+                           (Reg 'r10) (Reg 'r12) (Reg 'r13) (Reg 'r14)))
 
-(define (allocate-reg-imm imm var-reg-map callee-saved)
+(define (allocate-reg-imm imm var-reg-map callee-saved locals-types)
   (match imm
     [(Imm int) (Imm int)]
     [(Reg reg) (Reg reg)]
@@ -856,23 +885,29 @@
     [(Var x)
      (if (isReg? (dict-ref var-reg-map imm))
          (dict-ref var-reg-map imm)
-         (Deref 'rbp (+ (* -8 (length callee-saved)) (* -8 (dict-ref var-reg-map imm)))))]))
+         (if (not (Vector?  (Var x) locals-types))
+         (Deref 'rbp (+ (* -8 (length callee-saved)) (* -8 (dict-ref var-reg-map imm))))
+         (Deref 'r15 (* 8 (dict-ref var-reg-map imm)))))]
+    [(Global label) (Global label)]
+    [(Deref reg imm) (Deref reg imm)]))
 
-(define (allocate-reg-instr i var-reg-map callee-saved)
+(define (allocate-reg-instr i var/vec-reg-map callee-saved locals-types)
   (match i
-    [(Instr 'set (list cc e)) (Instr 'set (list cc (allocate-reg-imm e var-reg-map callee-saved)))]
-    [(Instr op (list e1)) (Instr op (list (allocate-reg-imm e1 var-reg-map callee-saved)))]
+    [(Instr 'set (list cc e)) (Instr 'set (list cc (allocate-reg-imm e var/vec-reg-map callee-saved locals-types)))]
+    [(Instr op (list e1)) (Instr op (list (allocate-reg-imm e1 var/vec-reg-map callee-saved locals-types)))]
     [(Instr op (list e1 e2)) (Instr op (list
-                                        (allocate-reg-imm e1 var-reg-map callee-saved)
-                                        (allocate-reg-imm e2 var-reg-map callee-saved)))]
+                                        (allocate-reg-imm e1 var/vec-reg-map callee-saved locals-types)
+                                        (allocate-reg-imm e2 var/vec-reg-map callee-saved locals-types)))]
     [_ i]))
 
-(define (get-spilled-vars var-reg-map spilled-vars)
+(define (get-spilled-vars var-reg-map spilled-vars spilled-vecs locals-types)
   (if (empty? var-reg-map)
-      spilled-vars
+      (values spilled-vars spilled-vecs)
       (match (car var-reg-map)
-        [(cons var (Reg _)) (get-spilled-vars (cdr var-reg-map) spilled-vars)]
-        [else (get-spilled-vars (cdr var-reg-map) (cons (car var-reg-map) spilled-vars))])))
+        [(cons var (Reg _)) (get-spilled-vars (cdr var-reg-map) spilled-vars spilled-vecs locals-types)]
+        [(cons var/vec _) (if (Vector? var/vec locals-types)
+                              (get-spilled-vars (cdr var-reg-map) spilled-vars (cons (car var-reg-map) spilled-vecs) locals-types)
+                              (get-spilled-vars (cdr var-reg-map) (cons (car var-reg-map) spilled-vars) spilled-vecs locals-types))])))
 
 
 (define (get-used-callee var-reg-map used-callee)
@@ -896,21 +931,41 @@
      (define init-color (gen-init-vertex-color g))
      (define init-saturation (gen-init-saturation g init-color))
      (define final-colors (color-graph g init-color init-saturation))
+     (define locals-types (dict-ref info 'locals-types))
      (define vertices (get-vertices g))
-     (define variables (filter isVar? vertices))
+     (define variables (filter (lambda (v) (and (isVar? v) (not (Vector? v locals-types)))) vertices))
+     (define vectors (filter (lambda (v) (Vector? v locals-types)) vertices))
+     (define variable-stack-position -1)
+     (define vector-stack-position -1)
      (define var-reg-map
        (map (lambda (v)
-              (if (< (dict-ref final-colors v) (length alloc-registers))
-                  (cons v (list-ref alloc-registers (dict-ref final-colors v)))
-                  (cons v (- (dict-ref final-colors v) (- (length alloc-registers) 1))))) variables))
-     (define spilled-vars (get-spilled-vars var-reg-map '()))
-     (define used-callee (get-used-callee var-reg-map '()))
+              (cond
+                [(< (dict-ref final-colors v) (length alloc-registers))
+                 (cons v (list-ref alloc-registers (dict-ref final-colors v)))]
+                [else (set! variable-stack-position (add1 variable-stack-position))
+                      (cons v variable-stack-position)])) variables))
+     (define vec-reg-map
+       (map (lambda (v)
+              (cond
+                [(< (dict-ref final-colors v) (length alloc-registers))
+                 (cons v (list-ref alloc-registers (dict-ref final-colors v)))]
+                [else (set! vector-stack-position (add1 vector-stack-position))
+                      (cons v vector-stack-position)])) vectors))
+
+     (define var/vec-reg-map (append var-reg-map vec-reg-map))
+
+     (define-values (spilled-vars spilled-vecs) (get-spilled-vars var/vec-reg-map '() '() locals-types))
+     
+     (define used-callee (get-used-callee var/vec-reg-map '()))
+     
      (define stack-space (calculate_stack_frame spilled-vars used-callee))
+     (define root-stack-space (* 8 (length spilled-vecs)))
      (define blk-body (for/list ([blk body])
                         (match blk
                           [(cons label (Block bl-info bl-body))
-                           (cons label (Block bl-info (for/list ([e bl-body]) (allocate-reg-instr e var-reg-map callee-saved))))])))
-     (X86Program (dict-set* info 'stack-space stack-space 'used-callee used-callee) blk-body)]))
+                           (cons label (Block bl-info (for/list ([e bl-body]) (allocate-reg-instr e var/vec-reg-map callee-saved locals-types))))])))
+     (X86Program
+      (dict-set* info 'stack-space stack-space 'used-callee used-callee 'root-stack-space root-stack-space) blk-body)]))
 
 
 (define (patch_instr  instr)
@@ -959,6 +1014,8 @@
      (define callee-saved (dict-ref info 'used-callee))
      (define push-callee-list (for/list ([r callee-saved]) (Instr 'pushq (list r))))
      (define pop-callee-list (for/list ([r callee-saved]) (Instr 'popq (list r))))
+     (define zero-out-list (for/list ([r (range 0 (quotient (dict-ref info 'root-stack-space) 8))])
+                             (Instr 'movq (list (Imm 0) (Deref 'r15 (* 8 r))))))
      (define main-block (list (cons 'main (Block '()
                                                 (append
                                                  (list
@@ -967,14 +1024,22 @@
                                                  push-callee-list
                                                  (list
                                                   (Instr 'subq (list (Imm (dict-ref info 'stack-space)) (Reg 'rsp)))
+                                                  (Instr 'movq (list (Imm 65536) (Reg 'rdi)))
+                                                  (Instr 'movq (list (Imm 65536) (Reg 'rsi)))
+                                                  (Callq 'initialize 2)
+                                                  (Instr 'movq (list (Global 'rootstack_begin) (Reg 'r15))))
+                                                  zero-out-list
+                                                  (list (Instr 'addq (list (Imm (dict-ref info 'root-stack-space)) (Reg 'r15)))
                                                   (Jmp 'start)))))))
      (define conc-block (list (cons 'conclusion (Block '()
                                                        (append
                                                         (list
+                                                         (Instr 'subq (list (Imm (dict-ref info 'root-stack-space)) (Reg 'r15)))
                                                          (Instr 'addq (list (Imm (dict-ref info 'stack-space)) (Reg 'rsp))))
                                                         pop-callee-list
                                                         (list
-                                                         (Instr 'popq (list (Reg 'rbp))) 
+                                                         (Instr 'popq (list (Reg 'rbp)))
+                                                         
                                                          (Retq))
                                                         )))))
      (define program (append main-block body conc-block))
@@ -1128,11 +1193,10 @@
      ("remove complex opera*", remove-complex-opera*, interp-Lvec-prime, type-check-Lvec)
      ("explicate control" ,explicate-control , interp-Cvec ,type-check-Cvec)
      ("instruction selection" , select-instructions ,interp-pseudo-x86-2)
-    ;;;  ("uncover live", uncover-live, interp-pseudo-x86-1)
-    ;;;  ("build interference", build-interference, interp-pseudo-x86-1)
-    ;;;  ("allocate registers", allocate-registers , interp-pseudo-x86-1)
-    ;;;  ;("assign homes" ,assign-homes ,interp-x86-0)
-    ;;;  ("patch instructions" ,patch-instructions , interp-pseudo-x86-1)
-    ;;;  ("prelude-and-conclusion" ,prelude-and-conclusion , interp-pseudo-x86-1)
+     ("uncover live", uncover-live, interp-pseudo-x86-2)
+     ("build interference", build-interference, interp-pseudo-x86-2)
+     ("allocate registers", allocate-registers , interp-pseudo-x86-2)
+     ("patch instructions" ,patch-instructions , interp-pseudo-x86-2)
+     ("prelude-and-conclusion" ,prelude-and-conclusion , interp-pseudo-x86-2)
      ))
 
