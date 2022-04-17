@@ -13,7 +13,7 @@
 (require "interp-Cvec.rkt")
 (require "type-check-Cvec.rkt")
 
-(debug-level 1)
+;(debug-level 1)
 ;; (AST-output-syntax 'concrete-syntax)
 
 ;; all the files in the tests/ directory with extension ".rkt".

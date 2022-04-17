@@ -232,6 +232,10 @@
     [(Bool b) (Bool b)]
     [(Var x) (Var x)]
     [(Int n) (Int n)]
+    [(If (Prim 'vector-ref es) t e)
+     (define-values (es_var es_env) (rco_atom (Prim 'vector-ref es)))
+     (helper_write_lets es_env (If (Prim 'eq? (list es_var (Bool #t)))
+         (rco_exp t) (rco_exp e)))]
     [(If c t e)
      (If (rco_exp c) (rco_exp t) (rco_exp e))]
     [(Let x rhs body)
@@ -284,9 +288,6 @@
                   (IfStmt (Prim op es)
                           (force (create_block t basic-blocks))
                           (force (create_block e basic-blocks)))]
-    [(Prim 'vector-ref es) (IfStmt (Prim 'eq? `(,(Prim 'vector-ref es) ,(Bool #t)))
-                     (force (create_block t basic-blocks))
-                     (force (create_block e basic-blocks)))]
     [(Let x rhs body)
      (let ([tail (explicate_pred body t e basic-blocks)])
        (explicate_assign rhs x tail basic-blocks))]
@@ -453,10 +454,10 @@
                                          (list (Instr 'subq (list (select_instructions_atm a1) (Var x))))]
     [(Assign (Var x) (Prim '- `(,a1 (Var ,x1)))) #:when (equal? x x1)
                                          (list (Instr 'subq (list (select_instructions_atm a1) (Var x) (Instr 'negq (list (Var x))))))]
-    [(Assign (Var x) (Prim 'vector-ref `(,tup ,n))) (define loc (* 8 (add1 n)))
+    [(Assign (Var x) (Prim 'vector-ref `(,tup ,(Int n)))) (define loc (* 8 (add1 n)))
                                    (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,(Deref 'r11 loc) ,(Var x)))
                                          )]
-    [(Assign (Var x) (Prim 'vector-set! `(,tup ,n ,rhs))) (define loc (* 8 (add1 n)))
+    [(Assign (Var x) (Prim 'vector-set! `(,tup ,(Int n) ,rhs))) (define loc (* 8 (add1 n)))
                                    (let ([rhs (select_instructions_atm rhs)])
                                    (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,rhs ,(Deref 'r11 loc)))
                                          (Instr 'movq `(,(Imm 0) ,(Var x)))))]
@@ -523,10 +524,10 @@
     [(Return (Prim 'read '())) (list (Callq 'read_int 1) (Jmp 'conclusion))]
     [(Return x) (append (assign_helper (Reg 'rax) x) (list (Jmp 'conclusion)))]
     [(Goto l) `(,(Jmp l))]
-    [(Return (Prim 'vector-ref `(,tup ,n))) (define loc (* 8 (add1 n)))
+    [(Return (Prim 'vector-ref `(,tup ,(Int n)))) (define loc (* 8 (add1 n)))
                                    (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,(Deref 'r11 loc) ,(Reg 'rax)))
                                          (Jmp 'conclusion))]
-    [(Return (Prim 'vector-set! `(,tup ,n ,rhs))) (define loc (* 8 (add1 n)))
+    [(Return (Prim 'vector-set! `(,tup ,(Int n) ,rhs))) (define loc (* 8 (add1 n)))
                                    (let ([rhs (select_instructions_atm rhs)])
                                    (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,rhs ,(Deref 'r11 loc)))
                                          (Instr 'movq `(,(Imm 0) ,(Reg 'rax))) (Jmp 'conclusion)))]
@@ -568,6 +569,7 @@
                   [(a2) (select_instructions_atm a2)])
        (append mov_rax
                `(,(Instr 'cmpq `(,a2 ,a1)) ,(JmpIf 'ge l1) ,(Jmp l2))))]
+
     [else (error "select instructions tail " e)]
     ))
 
@@ -1125,7 +1127,7 @@
      ("uncover-get", uncover-get!, interp-Lvec-prime)
      ("remove complex opera*", remove-complex-opera*, interp-Lvec-prime, type-check-Lvec)
      ("explicate control" ,explicate-control , interp-Cvec ,type-check-Cvec)
-     ("instruction selection" , select-instructions ,interp-pseudo-x86-1)
+     ("instruction selection" , select-instructions ,interp-pseudo-x86-2)
     ;;;  ("uncover live", uncover-live, interp-pseudo-x86-1)
     ;;;  ("build interference", build-interference, interp-pseudo-x86-1)
     ;;;  ("allocate registers", allocate-registers , interp-pseudo-x86-1)
