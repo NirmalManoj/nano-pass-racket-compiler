@@ -10,6 +10,8 @@
 (require "type-check-Lwhile.rkt")
 (require "interp-Lvec.rkt")
 (require "type-check-Lvec.rkt")
+(require "interp-Cvec.rkt")
+(require "type-check-Cvec.rkt")
 
 (debug-level 1)
 ;; (AST-output-syntax 'concrete-syntax)
@@ -32,13 +34,13 @@
 ;;; (interp-tests "var" #f compiler-passes interp-Lwhile "var_test" (tests-for "var"))
 ;;; (interp-tests "int" #f compiler-passes interp-Lwhile "int_test" (tests-for "int"))
 ;;; (interp-tests "cond" type-check-Lwhile compiler-passes interp-Lwhile "cond_test" (tests-for "cond"))
-(interp-tests "while" type-check-Lwhile compiler-passes interp-Lwhile "while_test" (tests-for "while"))
+;(interp-tests "while" type-check-Lwhile compiler-passes interp-Lwhile "while_test" (tests-for "while"))
 (interp-tests "vec" type-check-Lvec compiler-passes interp-Lvec "vectors_test" (tests-for "vectors"))
 
 ;; Uncomment the following when all the passes are complete to
 ;; test the final x86 code.
-(compiler-tests "var" #f compiler-passes "var_test" (tests-for "var"))
-(compiler-tests "int" #f compiler-passes "int_test" (tests-for "int"))
-(compiler-tests "cond" type-check-Lwhile compiler-passes "cond_test" (tests-for "cond"))
-(compiler-tests "while" type-check-Lwhile compiler-passes "while_test" (tests-for "while"))
+;(compiler-tests "var" #f compiler-passes "var_test" (tests-for "var"))
+;(compiler-tests "int" #f compiler-passes "int_test" (tests-for "int"))
+;(compiler-tests "cond" type-check-Lwhile compiler-passes "cond_test" (tests-for "cond"))
+;(compiler-tests "while" type-check-Lwhile compiler-passes "while_test" (tests-for "while"))
 

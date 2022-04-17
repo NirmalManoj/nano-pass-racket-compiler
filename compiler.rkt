@@ -21,6 +21,8 @@
 (require "type-check-Lwhile.rkt")
 (require "type-check-Cwhile.rkt")
 (require "type-check-Lvec.rkt")
+(require "interp-Cvec.rkt")
+(require "type-check-Cvec.rkt")
 (provide (all-defined-out))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -104,6 +106,7 @@
 (define (uniquify-exp env)
   (lambda (e)
     (match e
+      [(Void) (Void)]
       [(Bool b) (Bool b)]
       [(Var x)
        (Var (dict-ref env x))]
@@ -120,11 +123,14 @@
          )
          (Let x_new ((uniquify-exp env) e) ((uniquify-exp env_new) body))
          )]
+      [(HasType exp type) (HasType exp type)]
+      ;[]
       [(Prim op es)
        (Prim op (for/list ([e es]) ((uniquify-exp env) e)))]
       [(Begin es body) (Begin (for/list ([e es]) ((uniquify-exp env) e)) ((uniquify-exp env) body))]
       [(SetBang x exp) (SetBang (dict-ref env x) ((uniquify-exp env) exp))]
-      [(WhileLoop cond body) (WhileLoop ((uniquify-exp env) cond) ((uniquify-exp env) body))])))
+      [(WhileLoop cond body) (WhileLoop ((uniquify-exp env) cond) ((uniquify-exp env) body))]
+      )))
 
 ;; uniquify : R1 -> R1
 (define (uniquify p)
@@ -134,6 +140,7 @@
 
 (define (collect-set! e)
   (match e
+    ;[]
     [(Var x) (set)]
     [(Int x) (set)]
     [(Bool x) (set)]
@@ -142,10 +149,12 @@
     [(If c t e) (set-union (collect-set! c) (collect-set! t) (collect-set! e))]
     [(Prim op es) (foldl (lambda (i l) (set-union l (collect-set! i))) (set) es)]
     [(Begin es body) (set-union (foldl (lambda (i l) (set-union l (collect-set! i))) (set) es) (collect-set! body))]
-    [(WhileLoop cond body) (set-union (collect-set! cond) (collect-set! body))]))
+    [(WhileLoop cond body) (set-union (collect-set! cond) (collect-set! body))]
+    [_ (set)]))
 
 (define (uncover-get!-instr set!-vars instr)
   (match instr
+    [(Void) (Void)]
     [(Var x)
      (if (set-member? set!-vars x)
          (GetBang x)
@@ -268,11 +277,17 @@
     [(Var x) (IfStmt (Prim 'eq? `(,(Var x) ,(Bool #t)))
                      (force (create_block t basic-blocks))
                      (force (create_block e basic-blocks)))]
+    [(GlobalValue g) (IfStmt (Prim 'eq? `(,(GlobalValue g) ,(Bool #t)))
+                     (force (create_block t basic-blocks))
+                     (force (create_block e basic-blocks)))]
     [(Prim 'not `(,a)) (explicate_pred a e t basic-blocks)]
     [(Prim op es)
                   (IfStmt (Prim op es)
                           (force (create_block t basic-blocks))
                           (force (create_block e basic-blocks)))]
+    [(Prim 'vector-ref es) (IfStmt (Prim 'eq? `(,(Prim 'vector-ref es) ,(Bool #t)))
+                     (force (create_block t basic-blocks))
+                     (force (create_block e basic-blocks)))]
     [(Let x rhs body)
      (let ([tail (explicate_pred body t e basic-blocks)])
        (explicate_assign rhs x tail basic-blocks))]
@@ -298,6 +313,8 @@
     [(Let x rhs body)
      (define body_exp (explicate_effect body cont basic-blocks))
      (explicate_assign rhs x body_exp basic-blocks)]
+    [(Prim 'vector-set! es) (Seq (Prim 'vector-set! es) cont)]
+    [(Collect bytes) (Seq (Collect bytes) cont)]
     [(WhileLoop cnd body)
      (let* ([goto-loop (gensym 'loop)]
            [while_body (force (create_block (explicate_effect body (Goto goto-loop) basic-blocks) basic-blocks))]
@@ -318,6 +335,12 @@
     [(Bool b) (Return (Bool b))]
     [(Var x) (Return (Var x))]
     [(Int n) (Return (Int n))]
+    [(Prim 'vector-ref es) (Return (Prim 'vector-ref es))]
+    [(Prim 'vector-set! es) (Seq (Prim 'vector-set! es) (Return (Void)))]
+    [(Prim 'vector-length es) (Return (Prim 'vector-length es))]
+    [(GlobalValue g) (Return (GlobalValue g))]
+    [(Collect bytes) (Seq (Collect bytes) (Return (Void)))]
+    [(Allocate bytes t) (Return (Allocate bytes t))]
     [(If c t e)
      (let ([t_blk (create_block (delay (explicate_tail t basic-blocks)) basic-blocks)]
            [e_blk (create_block (delay (explicate_tail e basic-blocks)) basic-blocks)])
@@ -326,6 +349,7 @@
      (define body_exp (explicate_tail body basic-blocks))
      (explicate_assign rhs x body_exp basic-blocks)]
     [(Prim op es) (Return (Prim op es))]
+    [(HasType e t) (HasType (explicate_tail e basic-blocks) t)]
     [(WhileLoop cnd body)
      (let* ([goto-loop (gensym 'loop)]
            [while_body (create_block (explicate_effect body (Goto goto-loop) basic-blocks) basic-blocks)]
@@ -342,9 +366,17 @@
 ;explicate-assign
 (define (explicate_assign e x cont basic-blocks)
   (match e
+    [(Void) (Seq (Assign (Var x) (Void)) cont)]
     [(Bool b) (Seq (Assign (Var x) (Bool b)) cont)]
     [(Var y) (Seq (Assign (Var x) (Var y)) cont)]
     [(Int n) (Seq (Assign (Var x) (Int n)) (force cont))]
+    [(Prim 'vector-ref es) (Seq (Assign (Var x) (Prim 'vector-ref es)) cont)]
+    [(Prim 'vector-set! es) (Seq (Prim 'vector-set! es) (Seq (Assign (Var x) (Void)) cont))]
+    [(Prim 'vector-length es) (Seq (Assign (Var x) (Prim 'vector-length es)) cont)]
+    [(GlobalValue g) (Seq (Assign (Var x) (GlobalValue g)) cont)]
+    [(Collect bytes) (Seq (Collect bytes) (Seq (Assign (Var x) (Void)) cont))]
+    [(Allocate bytes t) (Seq (Assign (Var x) (Allocate bytes t)) cont)]
+    [(HasType e t) (Seq (Assign (Var x) (HasType e t)) cont)]
     [(If c t e)
      (let ([t_blk (delay (explicate_assign t x cont basic-blocks))]
            [e_blk (delay (explicate_assign e x cont basic-blocks))])
@@ -996,6 +1028,9 @@
     [(Prim 'vector-set! `(,t ,(Int i) ,e)) (Prim 'vector-set! `(,(exp-alloc t) ,(Int i) ,(exp-alloc e)))]
     [(Prim op es)
        (Prim op (for/list ([ex es]) (exp-alloc ex)))]
+    [(WhileLoop cond body) (WhileLoop (exp-alloc cond) (exp-alloc body))]
+    [(Begin es body) (Begin (for/list ([ex es]) (exp-alloc ex)) (exp-alloc body))]
+    [(SetBang x exp) (SetBang x (exp-alloc exp))]
     ;;; Primitive end
     )
   )
@@ -1030,12 +1065,12 @@
   `(
     ;;;  ("pe-Lvar", pe-Lvar, interp-Lvar)
      ("shrink", shrink, interp-Lvec, type-check-Lvec)
+     ("uniquify" ,uniquify , interp-Lvec-prime)
      ("expose allocation", expose-allocation, interp-Lvec-prime, type-check-Lvec)
     ;;;  ("shrink", shrink, interp-Lwhile, type-check-Lwhile)
-    ;;;  ("uniquify" ,uniquify ,interp-Lwhile)
-    ;;;  ("uncover-get", uncover-get!, interp-Lwhile)
+     ("uncover-get", uncover-get!, interp-Lvec-prime)
      ("remove complex opera*", remove-complex-opera*, interp-Lvec-prime, type-check-Lvec)
-    ;;;  ("explicate control" ,explicate-control , interp-Cwhile ,type-check-Cwhile)
+     ("explicate control" ,explicate-control , interp-Cvec ,type-check-Cvec)
     ;;;  ("instruction selection" , select-instructions ,interp-pseudo-x86-1)
     ;;;  ("uncover live", uncover-live, interp-pseudo-x86-1)
     ;;;  ("build interference", build-interference, interp-pseudo-x86-1)
