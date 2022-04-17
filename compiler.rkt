@@ -408,6 +408,7 @@
     [(Bool #t) (Imm 1)]
     [(Bool #f) (Imm 0)]
     [(Void) (Imm 0)]
+    [(GlobalValue g) (Global g)]
     [else (error "select_instructions_atm failed : " a)]))
 
 
@@ -417,11 +418,22 @@
      (values `(,(Instr 'movq `(,(Imm a) ,(Reg 'rax)))) (Reg 'rax))]
     [_ (values '() a)]))
 
+(define (pointer_mask t [mask 0])
+    (match t
+      [`(Vector) mask]
+      [`(Vector (Vector . ,_)) (bitwise-ior mask 1)]
+      [`(Vector ,_) mask]
+      [`(Vector . ((Vector . ,_) . ,rest)) (pointer_mask `(Vector . ,rest) (arithmetic-shift (bitwise-ior mask 1) 1))]
+      [`(Vector . (,t . ,rest)) (pointer_mask `(Vector . ,rest) (arithmetic-shift mask 1))]
+      [else (error "Pointer Mask Error" t)]))
+
 (define (assign_helper regi e)
   (match e
     [(Int i) (list (Instr 'movq (list (select_instructions_atm e) regi)))]
     [(Bool b) (list (Instr 'movq (list (select_instructions_atm e) regi)))]
     [(Var _) (list (Instr 'movq (list (select_instructions_atm e) regi)))]
+    [(Void) (list (Instr 'movq (list (select_instructions_atm e) regi)))]
+    [(GlobalValue g) (list (Instr 'movq (list (select_instructions_atm e) regi)))]
     [(Prim 'read '()) (list (Callq 'read_int 1) (Instr 'movq (list (Reg 'rax) regi)))]
     [(Prim '- (list x)) (list (Instr 'movq (list (select_instructions_atm x) regi))
                               (Instr 'negq (list regi)))]
@@ -441,7 +453,22 @@
                                          (list (Instr 'subq (list (select_instructions_atm a1) (Var x))))]
     [(Assign (Var x) (Prim '- `(,a1 (Var ,x1)))) #:when (equal? x x1)
                                          (list (Instr 'subq (list (select_instructions_atm a1) (Var x) (Instr 'negq (list (Var x))))))]
-    
+    [(Assign (Var x) (Prim 'vector-ref `(,tup ,n))) (define loc (* 8 (add1 n)))
+                                   (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,(Deref 'r11 loc) ,(Var x)))
+                                         )]
+    [(Assign (Var x) (Prim 'vector-set! `(,tup ,n ,rhs))) (define loc (* 8 (add1 n)))
+                                   (let ([rhs (select_instructions_atm rhs)])
+                                   (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,rhs ,(Deref 'r11 loc)))
+                                         (Instr 'movq `(,(Imm 0) ,(Var x)))))]
+    [(Assign (Var x) (Allocate len t)) (define loc (* 8 (add1 len)))
+                                (let ([tag (bitwise-ior 1 (arithmetic-shift len 1) (arithmetic-shift (pointer_mask t) 7))])
+                                   (list (Instr 'movq `(,(Global 'free_ptr) ,(Reg 'r11))) (Instr 'addq `(,loc ,(Global 'free_ptr)))
+                                         (Instr 'movq `(,(Imm tag) ,(Deref 'r11 0)))
+                                         (Instr 'movq `(,(Reg 'r11) ,(Var x)))
+                                         ))]
+    [(Assign (Var x) (Collect bytes)) (list (Instr 'movq `(,(Reg 'r15) ,(Reg 'rdi))) (Instr 'movq `(,(Imm bytes) ,(Reg 'rsi))) (Callq 'collect 2)
+                                         (Instr 'movq `(,(Imm 0) ,(Var x))))]
+    [(Collect bytes) (list (Instr 'movq `(,(Reg 'r15) ,(Reg 'rdi))) (Instr 'movq `(,bytes ,(Reg 'rsi))) (Callq 'collect 2))]
     [(Assign (Var x) (Prim 'not `(,(Var x)))) `(,(Instr 'xorq `(,(Imm 1) ,(Var x))))] ; pno 75
     [(Assign (Var x) (Prim 'not `(,(Var a)))) 
       `(,(Instr 'movq `(,a ,(Var x)))
@@ -476,6 +503,7 @@
        (append mov_rax
                `(,(Instr 'cmpq `(,a2 ,a1))  ,(Instr 'set `(ge ,(Reg 'al)))  
                  ,(Instr 'movzbq `(,(Reg 'al) ,(Var x))))))]
+    [(Assign (Var x) (Void)) (list (Instr 'movq (list (select_instructions_atm (Void)) (Var x))))]
     [(Assign x e) (assign_helper x e)]
     [(Prim 'read '()) (list (Callq 'read_int 1))]
     [else (error "select instructions stmt " stmt)]
@@ -488,6 +516,21 @@
     [(Return (Prim 'read '())) (list (Callq 'read_int 1) (Jmp 'conclusion))]
     [(Return x) (append (assign_helper (Reg 'rax) x) (list (Jmp 'conclusion)))]
     [(Goto l) `(,(Jmp l))]
+    [(Return (Prim 'vector-ref `(,tup ,n))) (define loc (* 8 (add1 n)))
+                                   (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,(Deref 'r11 loc) ,(Reg 'rax)))
+                                         (Jmp 'conclusion))]
+    [(Return (Prim 'vector-set! `(,tup ,n ,rhs))) (define loc (* 8 (add1 n)))
+                                   (let ([rhs (select_instructions_atm rhs)])
+                                   (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,rhs ,(Deref 'r11 loc)))
+                                         (Instr 'movq `(,(Imm 0) ,(Reg 'rax))) (Jmp 'conclusion)))]
+    [(Return (Allocate len t)) (define loc (* 8 (add1 len)))
+                                (let ([tag (bitwise-ior 1 (arithmetic-shift len 1) (arithmetic-shift (pointer_mask t) 7))])
+                                   (list (Instr 'movq `(,(Global 'free_ptr) ,(Reg 'r11))) (Instr 'addq `(,loc ,(Global 'free_ptr)))
+                                         (Instr 'movq `(,(Imm tag) ,(Deref 'r11 0)))
+                                         (Instr 'movq `(,(Reg 'r11) ,(Reg 'rax)))
+                                         (Jmp 'conclusion)))]
+    [(Return (Collect bytes)) (list (Instr 'movq `(,(Reg 'r15) ,(Reg 'rdi))) (Instr 'movq `(,(Imm bytes) ,(Reg 'rsi))) (Callq 'collect 2)
+                                         (Instr 'movq `(,(Imm 0) ,(Reg 'rax))) (Jmp 'conclusion))]
     [(IfStmt (Prim 'eq? `(,a1 ,a2)) (Goto l1) (Goto l2))
      (let-values ([(mov_rax a1) (cmp_helper a1)]
                   [(a2) (select_instructions_atm a2)])
@@ -1070,7 +1113,7 @@
      ("uncover-get", uncover-get!, interp-Lvec-prime)
      ("remove complex opera*", remove-complex-opera*, interp-Lvec-prime, type-check-Lvec)
      ("explicate control" ,explicate-control , interp-Cvec ,type-check-Cvec)
-    ;;;  ("instruction selection" , select-instructions ,interp-pseudo-x86-1)
+     ("instruction selection" , select-instructions ,interp-pseudo-x86-1)
     ;;;  ("uncover live", uncover-live, interp-pseudo-x86-1)
     ;;;  ("build interference", build-interference, interp-pseudo-x86-1)
     ;;;  ("allocate registers", allocate-registers , interp-pseudo-x86-1)
