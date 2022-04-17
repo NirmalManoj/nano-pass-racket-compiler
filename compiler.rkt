@@ -441,7 +441,8 @@
     [(Prim '+ (list x1 x2)) (list (Instr 'movq (list (select_instructions_atm x1) regi))
                               (Instr 'addq (list (select_instructions_atm x2) regi)))]
     [(Prim '- (list x1 x2)) (list (Instr 'movq (list (select_instructions_atm x1) regi))
-                              (Instr 'subq (list (select_instructions_atm x2) regi)))]))
+                              (Instr 'subq (list (select_instructions_atm x2) regi)))])
+    )
 
 (define (select_instructions_stmt stmt)
   (match stmt
@@ -464,7 +465,7 @@
     [(Prim 'vector-set! `(,tup ,(Int n) ,rhs)) (define loc (* 8 (add1 n)))
                                    (let ([rhs (select_instructions_atm rhs)])
                                    (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,rhs ,(Deref 'r11 loc)))))]
-    [(Assign (Var x) (Prim 'vector-length tup)) (list (Instr 'movq `(,tup ,(Reg 'r11)))
+    [(Assign (Var x) (Prim 'vector-length (list tup))) (list (Instr 'movq `(,tup ,(Reg 'r11)))
                                                       (Instr 'movq `(,(Deref 'r11 0) ,(Var x)))
                                                       (Instr 'andq `(,(Imm 63) ,(Var x)))
                                                       (Instr 'sarq `(,(Imm 1) ,(Var x))))]
@@ -522,7 +523,6 @@
   (match e
     [(Seq stmt e*) (append (select_instructions_stmt stmt) (select_instructions_tail e*))]
     [(Return (Prim 'read '())) (list (Callq 'read_int 1) (Jmp 'conclusion))]
-    [(Return x) (append (assign_helper (Reg 'rax) x) (list (Jmp 'conclusion)))]
     [(Goto l) `(,(Jmp l))]
     [(Return (Prim 'vector-ref `(,tup ,(Int n)))) (define loc (* 8 (add1 n)))
                                    (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,(Deref 'r11 loc) ,(Reg 'rax)))
@@ -531,7 +531,7 @@
                                    (let ([rhs (select_instructions_atm rhs)])
                                    (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,rhs ,(Deref 'r11 loc)))
                                          (Instr 'movq `(,(Imm 0) ,(Reg 'rax))) (Jmp 'conclusion)))]
-    [(Return (Prim 'vector-length tup)) (list (Instr 'movq `(,tup ,(Reg 'r11)))
+    [(Return (Prim 'vector-length (list tup))) (list (Instr 'movq `(,tup ,(Reg 'r11)))
                                                       (Instr 'movq `(,(Deref 'r11 0) ,(Reg 'rax)))
                                                       (Instr 'andq `(,(Imm 63) ,(Reg 'rax)))
                                                       (Instr 'sarq `(,(Imm 1) ,(Reg 'rax)))
@@ -569,7 +569,7 @@
                   [(a2) (select_instructions_atm a2)])
        (append mov_rax
                `(,(Instr 'cmpq `(,a2 ,a1)) ,(JmpIf 'ge l1) ,(Jmp l2))))]
-
+    [(Return x) (append (assign_helper (Reg 'rax) x) (list (Jmp 'conclusion)))]
     [else (error "select instructions tail " e)]
     ))
 
