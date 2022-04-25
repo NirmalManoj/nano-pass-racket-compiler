@@ -168,6 +168,8 @@
     [(Prim op es) (foldl (lambda (i l) (set-union l (collect-set! i))) (set) es)]
     [(Begin es body) (set-union (foldl (lambda (i l) (set-union l (collect-set! i))) (set) es) (collect-set! body))]
     [(WhileLoop cond body) (set-union (collect-set! cond) (collect-set! body))]
+    [(Apply fun args*) (set-union (collect-set! fun)
+                                  (foldl (lambda (i l) (set-union l (collect-set! i))) (set) args*))]
     [_ (set)]))
 
 (define (uncover-get!-instr set!-vars instr)
@@ -177,6 +179,7 @@
      (if (set-member? set!-vars x)
          (GetBang x)
          (Var x))]
+    [(FunRef f n) (FunRef f n)]
     [(Let x rhs body)
      (Let x (uncover-get!-instr set!-vars rhs)  (uncover-get!-instr set!-vars body))]
     [(If c t e)
@@ -185,13 +188,21 @@
     [(SetBang var exp) (SetBang var (uncover-get!-instr set!-vars exp))]
     [(Begin es body) (Begin (for/list ([e es]) (uncover-get!-instr set!-vars e)) (uncover-get!-instr set!-vars body))]
     [(WhileLoop cond body) (WhileLoop (uncover-get!-instr set!-vars cond) (uncover-get!-instr set!-vars body))]
+    [(Apply fun args*) (Apply (uncover-get!-instr set!-vars fun) (map (lambda (i) (uncover-get!-instr set!-vars i)) args*))]
     [else instr]))
 
 (define (uncover-get! p)
   (match p
-    [(Program info e)
-     (define set!-vars (collect-set! e))
-     (Program info (uncover-get!-instr set!-vars e))]))
+    [(ProgramDefs info fn)
+     (define set!-vars
+       (foldl (lambda (i accu) (match i
+                                       [(Def fn_label fn_arg fn_ret '() fn_exp)
+                                        (set-union accu (collect-set! fn_exp))])) (set) fn))
+     (ProgramDefs info
+                  (for/list ([f fn])
+                    (match f
+                      [(Def fn_label fn_arg fn_ret '() fn_exp)
+                       (Def fn_label fn_arg fn_ret '() (uncover-get!-instr set!-vars fn_exp))])))]))
 
 (define (atom? e)
   (or (Void? e) (Var? e) (Int? e) (Bool? e))
@@ -1298,7 +1309,7 @@
     ("reveal functions", reveal-functions, interp-Lfun-prime, type-check-Lfun)
     ("limit functions", limit-functions, interp-Lfun-prime, type-check-Lfun)
     ("expose allocation", expose-allocation, interp-Lfun-prime, type-check-Lfun)
-    ;;;  ("uncover-get", uncover-get!, interp-Lvec-prime)
+    ("uncover-get", uncover-get!, interp-Lfun-prime, type-check-Lfun)
     ;;;  ("remove complex opera*", remove-complex-opera*, interp-Lvec-prime, type-check-Lvec)
     ;;;  ("explicate control" ,explicate-control , interp-Cvec ,type-check-Cvec)
     ;;;  ("instruction selection" , select-instructions ,interp-pseudo-x86-2)
