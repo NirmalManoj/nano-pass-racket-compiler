@@ -23,6 +23,9 @@
 (require "type-check-Lvec.rkt")
 (require "interp-Cvec.rkt")
 (require "type-check-Cvec.rkt")
+(require "type-check-Lfun.rkt")
+(require "interp-Lfun.rkt")
+(require "interp-Lfun-prime.rkt")
 (provide (all-defined-out))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -110,6 +113,8 @@
       [(Bool b) (Bool b)]
       [(Var x)
        (Var (dict-ref env x))]
+      [(Apply fun arg*)
+       (Apply ((uniquify-exp env) fun) (map (uniquify-exp env) arg*))]
       [(Int n) (Int n)]
       [(If c t e) 
       (If ((uniquify-exp env) c) 
@@ -124,18 +129,32 @@
          (Let x_new ((uniquify-exp env) e) ((uniquify-exp env_new) body))
          )]
       [(HasType exp type) (HasType exp type)]
-      ;[]
       [(Prim op es)
        (Prim op (for/list ([e es]) ((uniquify-exp env) e)))]
       [(Begin es body) (Begin (for/list ([e es]) ((uniquify-exp env) e)) ((uniquify-exp env) body))]
       [(SetBang x exp) (SetBang (dict-ref env x) ((uniquify-exp env) exp))]
       [(WhileLoop cond body) (WhileLoop ((uniquify-exp env) cond) ((uniquify-exp env) body))]
+      [else (display e)]
       )))
 
 ;; uniquify : R1 -> R1
 (define (uniquify p)
   (match p
-    [(Program info e) (Program info ((uniquify-exp '()) e))]))
+    [(ProgramDefs info fn)
+     (define fn-env (for/list ([f fn])
+                      (match f
+                        [(Def fn_label fn_arg fn_ret '() fn_exp)
+                         (cons fn_label fn_label)])))
+     (ProgramDefs info
+                  (for/list
+                      ([f fn])
+                    (match f
+                      [(Def fn_label fn_arg fn_ret '() fn_exp)
+                       (define param-env (for/list
+                                             ([arg fn_arg])
+                                           (match arg
+                                             [`(,x : ,T) (cons x x)])))
+                       (Def fn_label fn_arg fn_ret '() ((uniquify-exp (append param-env fn-env)) fn_exp))])))]))
 
 
 (define (collect-set! e)
@@ -1066,6 +1085,8 @@
     [(Bool b) (Bool b)]
     [(Int i) (Int i)]
     [(Var v) (Var v)]
+    [(Apply fun arg*)
+     (Apply (shrink-exp fun) (map shrink-exp arg*))]
     [(If c t e) (If (shrink-exp c) (shrink-exp t) (shrink-exp e))]
     [(Let x e b) (Let x (shrink-exp e) (shrink-exp b))]
     [(HasType e t) (HasType (shrink-exp e) t)]
@@ -1090,9 +1111,12 @@
 
 (define (shrink p)
   (match p
-    [(Program info e) (Program info (shrink-exp e))]
-  )
-)
+    [(ProgramDefsExp info def_list exp)
+     (define main_fn (Def 'main '() 'Integer '() (shrink-exp exp)))
+     (define other_fn (for/list ([fn def_list])
+                            (match fn
+                              [(Def fn_label fn_arg fn_ret '() fn_exp) (Def fn_label fn_arg fn_ret '() (shrink-exp fn_exp))])))
+     (ProgramDefs info (append other_fn (list main_fn)))]))
 
 
 
@@ -1158,45 +1182,86 @@
 
 (define (expose-allocation p)
   (match p
-    [(Program info e) (Program info (exp-alloc e))]
-    )
-  )
+    [(Program info e) (Program info (exp-alloc e))]))
+
+
+(define (reveal-functions-exp env e)
+  (match e
+    [(Void) (Void)]
+    [(Bool b) (Bool b)]
+    [(Var x)
+     (if (dict-has-key? env x) (FunRef x (dict-ref env x)) (Var x))]
+    [(Apply fun arg*)
+     (Apply (reveal-functions-exp env fun) (map (lambda (e) (reveal-functions-exp env e)) arg*))]
+    [(Int n) (Int n)]
+    [(If c t e) 
+     (If (reveal-functions-exp env c) 
+         (reveal-functions-exp env t)
+         (reveal-functions-exp env e)
+         )]
+    [(Let x e body)
+      (Let x (reveal-functions-exp env e) (reveal-functions-exp env body))]
+    [(HasType exp type) (HasType exp type)]
+    [(Prim op es)
+     (Prim op (for/list ([e es]) (reveal-functions-exp env e)))]
+    [(Begin es body) (Begin (for/list ([e es]) (reveal-functions-exp env e)) (reveal-functions-exp env body))]
+    [(SetBang x exp) (SetBang x (reveal-functions-exp env exp))]
+    [(WhileLoop cond body) (WhileLoop (reveal-functions-exp env cond) (reveal-functions-exp env body))]))
+
+
+(define (reveal-functions p)
+  (match p
+    [(ProgramDefs info fn)
+     (define fn-arity (for/list ([f fn])
+                      (match f
+                        [(Def fn_label fn_arg fn_ret '() fn_exp)
+                         (cons fn_label (length fn_arg))])))
+     (ProgramDefs info
+                  (for/list
+                      ([f fn])
+                    (match f
+                      [(Def fn_label fn_arg fn_ret '() fn_exp)
+                       (Def fn_label fn_arg fn_ret '() (reveal-functions-exp fn-arity fn_exp))])))]))
 
 
 
-;; Define the compiler passes to be used by interp-tests and the grader
-;; Note that your compiler file (the file that defines the passes)
-;; must be named "compiler.rkt"
-;;; (define compiler-passes
-;;;   `(
-;;;    ;  ("pe-Lvar", pe-Lvar, interp-Lvar)
-;;;    ;  ("uniquify" ,uniquify ,interp-Lvar)
-;;;    ;  ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
-;;;    ;  ("explicate control" ,explicate-control ,interp-Cvar)
-;;;    ;  ("instruction selection" ,select-instructions ,interp-x86-0)
-;;;      ; ("uncover live", uncover-live, interp-x86-0)
-;;;      ; ("build interference", build-interference, interp-x86-0)
-;;;      ; ("allocate registers", allocate-registers ,interp-x86-0)
-;;;      ; ("assign homes" ,assign-homes ,interp-x86-0)
-;;;      ; ("patch instructions" ,patch-instructions ,interp-x86-0)
-;;;      ; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
-;;;      ))
+;;; (define max_arg_lim 6)
+
+;;; (define (limit-def args))
+
+;;; (define (limit-functions p)
+;;;   (match p
+;;;     [(ProgramDefs info fn)
+;;;      (define limit-def-body (for/list ([f fn])
+;;;                       (match f
+;;;                         [(Def fn_label fn_arg fn_ret '() fn_exp)
+;;;                          (if (> (length fn_arg) max_arg_lim)
+;;;                              (Def fn_label (limit-def fn_arg) fn_ret '() (limit-body fn_exp fn_args))
+;;;                              f)])))
+
+;;;      (ProgramDefs info
+;;;                   (for/list
+;;;                       ([f fn])
+;;;                     (match f
+;;;                       [(Def fn_label fn_arg fn_ret '() fn_exp)
+;;;                        (Def fn_label fn_arg fn_ret '() (reveal-functions-exp fn-arity fn_exp))])))]))
+
 
 (define compiler-passes
   `(
     ;;;  ("pe-Lvar", pe-Lvar, interp-Lvar)
-     ("shrink", shrink, interp-Lvec, type-check-Lvec)
-     ("uniquify" ,uniquify , interp-Lvec-prime)
-     ("expose allocation", expose-allocation, interp-Lvec-prime, type-check-Lvec)
-    ;;;  ("shrink", shrink, interp-Lwhile, type-check-Lwhile)
-     ("uncover-get", uncover-get!, interp-Lvec-prime)
-     ("remove complex opera*", remove-complex-opera*, interp-Lvec-prime, type-check-Lvec)
-     ("explicate control" ,explicate-control , interp-Cvec ,type-check-Cvec)
-     ("instruction selection" , select-instructions ,interp-pseudo-x86-2)
-     ("uncover live", uncover-live, interp-pseudo-x86-2)
-     ("build interference", build-interference, interp-pseudo-x86-2)
-     ("allocate registers", allocate-registers , interp-pseudo-x86-2)
-     ("patch instructions" ,patch-instructions , interp-pseudo-x86-2)
-     ("prelude-and-conclusion" ,prelude-and-conclusion , interp-pseudo-x86-2)
+     ("shrink", shrink, interp-Lfun, type-check-Lfun)
+     ("uniquify" ,uniquify , interp-Lfun-prime, type-check-Lfun)
+     ("reveal functions", reveal-functions, interp-Lfun-prime, type-check-Lfun)
+    ;;;  ("expose allocation", expose-allocation, interp-Lvec-prime, type-check-Lvec)
+    ;;;  ("uncover-get", uncover-get!, interp-Lvec-prime)
+    ;;;  ("remove complex opera*", remove-complex-opera*, interp-Lvec-prime, type-check-Lvec)
+    ;;;  ("explicate control" ,explicate-control , interp-Cvec ,type-check-Cvec)
+    ;;;  ("instruction selection" , select-instructions ,interp-pseudo-x86-2)
+    ;;;  ("uncover live", uncover-live, interp-pseudo-x86-2)
+    ;;;  ("build interference", build-interference, interp-pseudo-x86-2)
+    ;;;  ("allocate registers", allocate-registers , interp-pseudo-x86-2)
+    ;;;  ("patch instructions" ,patch-instructions , interp-pseudo-x86-2)
+    ;;;  ("prelude-and-conclusion" ,prelude-and-conclusion , interp-pseudo-x86-2)
      ))
 
