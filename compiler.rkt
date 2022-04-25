@@ -1109,9 +1109,10 @@
     [(Instr op (list (Deref  reg1 offset1) (Deref reg2 offset2)))
          (list (Instr 'movq (list (Deref reg1 offset1) (Reg 'rax)))
                (Instr op (list (Reg 'rax) (Deref reg2 offset2))))]
-    [(Instr 'compq (list a (Imm b))) ;; target must not be Imm
+    [(Instr 'cmpq (list a (Imm b))) ;; target must not be Imm
      (list (Instr 'movq (list (Imm b) (Reg 'rax)))
-           (Instr 'compq (list a (Reg 'rax))))]
+           (Instr 'cmpq (list a (Reg 'rax))))]
+    ;s[(Instr 'leaq (list ))]
     [else (list instr)]))
 
 (define (patch_block block)
