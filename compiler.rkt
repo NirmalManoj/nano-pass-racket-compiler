@@ -26,6 +26,8 @@
 (require "type-check-Lfun.rkt")
 (require "interp-Lfun.rkt")
 (require "interp-Lfun-prime.rkt")
+(require "interp-Cfun.rkt")
+(require "type-check-Cfun.rkt")
 (provide (all-defined-out))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -225,6 +227,16 @@
       (values e '())]
     [(HasType e t) (let-values ([(atm env) (rco_atom e)])
                     (values (Var atm) env))]
+    [(FunRef f arity)
+      (let ([temp (gensym 'funref-symbol_)])
+        (values temp `((,temp . ,(FunRef f arity)))))]
+    [(Apply fun arg*)
+      (define temp (gensym 'fun-ret-var-))
+      (define-values (f_atm f_env) (rco_atom fun))
+      (set! f_atm (if (symbol? f_atm) (Var f_atm) f_atm))
+      (define-values (arg_atm* arg_env*) (map rco_atom arg*))
+      (define complete_env (append* arg_env*))
+      (values temp (append f_env complete_env `((,temp . ,(Apply f_atm arg_atm*)))))]
     [(Collect bytes)
       (let ([temp (gensym 'collect-bytes)])
       (values temp `((,temp . ,(Collect bytes)))))]
@@ -270,6 +282,16 @@
     [(Let x rhs body)
      (Let x (rco_exp rhs) (rco_exp body))]
     [(HasType e t) (HasType (rco_exp e) t)]
+    [(FunRef f arity) (FunRef f arity)]
+    [(Apply fun arg*)
+      (define temp (gensym 'fun-ret-var-))
+      (define-values (f_atm f_env) (rco_atom fun))
+      (set! f_atm (if (symbol? f_atm) (Var f_atm) f_atm))
+      (define-values (arg_atm* arg_env*)
+        (for/lists (arg_atm arg_env) ([arg arg*]) (rco_atom arg)))
+      (define complete_env (append* arg_env*))
+      (define temp_env (append f_env complete_env))
+      (helper_write_lets temp_env (Apply f_atm arg_atm*))]
     [(Collect bytes) (Collect bytes)]
     [(Allocate bytes t) (Allocate bytes t)]
     [(GlobalValue x) (GlobalValue (rco_atom x))]
@@ -288,7 +310,10 @@
 ;; remove-complex-opera* : R1 -> R1
 (define (remove-complex-opera* p)
   (match p
-    [(Program info e) (Program info (rco_exp e))]))
+    [(ProgramDefs info fn)
+     (ProgramDefs info (for/list
+                      ([f fn])
+                         (struct-copy Def f [body (rco_exp (Def-body f))])))]))
 
 
 (define (create_block tail basic-blocks)
@@ -329,6 +354,10 @@
      (let ([body^ (explicate_pred body t e basic-blocks)])
        (for/foldr ([cont body^]) ([e es])
              (explicate_effect e cont basic-blocks)))]
+    [(Apply fun args*)
+     (IfStmt (Call fun args*)
+                          (force (create_block t basic-blocks))
+                          (force (create_block e basic-blocks)))]
     [else (error "explicate_pred unhandled case" c)]))
 
 
@@ -355,6 +384,7 @@
      (let ([body^ (explicate_effect body cont basic-blocks)])
            (for/foldr ([cont body^]) ([e es])
              (explicate_effect e cont basic-blocks)))]
+    [(Apply fun args*) (Seq (Call fun args*) cont)]
     [else cont]))
   
 
@@ -390,6 +420,9 @@
      (let ([body^ (explicate_tail body basic-blocks)])
            (for/foldr ([cont body^]) ([e es])
              (explicate_effect e cont basic-blocks)))]
+    [(Apply fun args*)
+     (TailCall fun args*)]
+    [(FunRef f n) (Return (FunRef f n))]
     [else (error "explicate_tail unhandled case" e)]))
 
 ;explicate-assign
@@ -418,17 +451,26 @@
      (define x_body (explicate_assign body x cont basic-blocks))
      (for/foldr ([cont x_body]) ([e es])
              (explicate_effect e cont basic-blocks))]
+    [(Apply fun args*)
+     (Seq (Assign (Var x) (Call fun args*)) cont)]
+    [(FunRef f n) (Seq (Assign (Var x) (FunRef f n)) cont)]
     [else (error "explicate_assign unhandled case" e)]))
+
+
+(define (explicate-control-fun fun)
+  (match fun
+    [(Def fn_label fn_arg fn_ret '() fn_exp)
+     (let*
+         ([basic-blocks (make-hash)]
+          [fn_start_label (string->symbol (string-append (symbol->string fn_label) "start"))]
+          [_ (dict-set! basic-blocks fn_start_label (explicate_tail fn_exp basic-blocks))])
+       (Def fn_label fn_arg fn_ret '() (hash->list basic-blocks)))]))
+
 
 ;; explicate-control : R1 -> C0
 (define (explicate-control p)
   (match p
-    [(Program info body)
-     (let*
-         ([basic-blocks (make-hash)]
-          [_ (dict-set! basic-blocks 'start (explicate_tail body basic-blocks))])
-         (CProgram info (hash->list basic-blocks)) ; Labels to Block list
-       )]))
+    [(ProgramDefs info fn) (ProgramDefs info (map explicate-control-fun fn))]))
 
 
 (define (select_instructions_atm a)
@@ -470,11 +512,18 @@
     [(Prim '+ (list x1 x2)) (list (Instr 'movq (list (select_instructions_atm x1) regi))
                               (Instr 'addq (list (select_instructions_atm x2) regi)))]
     [(Prim '- (list x1 x2)) (list (Instr 'movq (list (select_instructions_atm x1) regi))
-                              (Instr 'subq (list (select_instructions_atm x2) regi)))])
-    )
+                              (Instr 'subq (list (select_instructions_atm x2) regi)))]))
 
 (define (select_instructions_stmt stmt)
   (match stmt
+    [(Assign (Var x) (FunRef f n)) (list (Instr 'leaq (list (Global f) (Var x))))]  ;;;;;;;;;;;;;;;;;;;
+    [(Assign (Var x) (Call fun args*)) ;;;;;;;;;;;;;;
+     (define arg_moves (map
+                  (lambda (idx)
+                        (Instr 'movq (list (select_instructions_atm (list-ref args* idx)) (list-ref arguments idx))))
+                      (range 0 (length args*))))
+      (append arg_moves
+               (list (IndirectCallq fun (length args*)) (Instr 'movq `(,(Reg 'rax) ,(Var x)))))]
     [(Assign (Var x) (Prim '+ `((Var ,x1) ,a1))) #:when (equal? x x1)
                                          (list (Instr 'addq (list (select_instructions_atm a1) (Var x))))]
     [(Assign (Var x) (Prim '+ `(,a1 (Var ,x1)))) #:when (equal? x x1)
@@ -544,35 +593,33 @@
     [(Assign (Var x) (Void)) (list (Instr 'movq (list (select_instructions_atm (Void)) (Var x))))]
     [(Assign x e) (assign_helper x e)]
     [(Prim 'read '()) (list (Callq 'read_int 1))]
-    [else (error "select instructions stmt " stmt)]
-    )
-  )
+    [else (error "select instructions stmt " stmt)]))
 
-(define (select_instructions_tail e)
+(define (select_instructions_tail e fn_conc_label)
   (match e
-    [(Seq stmt e*) (append (select_instructions_stmt stmt) (select_instructions_tail e*))]
-    [(Return (Prim 'read '())) (list (Callq 'read_int 1) (Jmp 'conclusion))]
+    [(Seq stmt e*) (append (select_instructions_stmt stmt) (select_instructions_tail e* fn_conc_label))]
+    [(Return (Prim 'read '())) (list (Callq 'read_int 1) (Jmp fn_conc_label))]
     [(Goto l) `(,(Jmp l))]
     [(Return (Prim 'vector-ref `(,tup ,(Int n)))) (define loc (* 8 (add1 n)))
                                    (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,(Deref 'r11 loc) ,(Reg 'rax)))
-                                         (Jmp 'conclusion))]
+                                         (Jmp fn_conc_label))]
     [(Return (Prim 'vector-set! `(,tup ,(Int n) ,rhs))) (define loc (* 8 (add1 n)))
                                    (let ([rhs (select_instructions_atm rhs)])
                                    (list (Instr 'movq `(,tup ,(Reg 'r11))) (Instr 'movq `(,rhs ,(Deref 'r11 loc)))
-                                         (Instr 'movq `(,(Imm 0) ,(Reg 'rax))) (Jmp 'conclusion)))]
+                                         (Instr 'movq `(,(Imm 0) ,(Reg 'rax))) (Jmp fn_conc_label)))]
     [(Return (Prim 'vector-length (list tup))) (list (Instr 'movq `(,tup ,(Reg 'r11)))
                                                       (Instr 'movq `(,(Deref 'r11 0) ,(Reg 'rax)))
                                                       (Instr 'andq `(,(Imm 63) ,(Reg 'rax)))
                                                       (Instr 'sarq `(,(Imm 1) ,(Reg 'rax)))
-                                                      (Jmp 'conclusion))]
+                                                      (Jmp fn_conc_label))]
     [(Return (Allocate len t)) (define loc (* 8 (add1 len)))
                                 (let ([tag (bitwise-ior 1 (arithmetic-shift len 1) (arithmetic-shift (pointer_mask t) 7))])
                                    (list (Instr 'movq `(,(Global 'free_ptr) ,(Reg 'r11))) (Instr 'addq `(,loc ,(Global 'free_ptr)))
                                          (Instr 'movq `(,(Imm tag) ,(Deref 'r11 0)))
                                          (Instr 'movq `(,(Reg 'r11) ,(Reg 'rax)))
-                                         (Jmp 'conclusion)))]
+                                         (Jmp fn_conc_label)))]
     [(Return (Collect bytes)) (list (Instr 'movq `(,(Reg 'r15) ,(Reg 'rdi))) (Instr 'movq `(,(Imm bytes) ,(Reg 'rsi))) (Callq 'collect 2)
-                                         (Instr 'movq `(,(Imm 0) ,(Reg 'rax))) (Jmp 'conclusion))]
+                                         (Instr 'movq `(,(Imm 0) ,(Reg 'rax))) (Jmp fn_conc_label))]
     [(IfStmt (Prim 'eq? `(,a1 ,a2)) (Goto l1) (Goto l2))
      (let-values ([(mov_rax a1) (cmp_helper a1)]
                   [(a2) (select_instructions_atm a2)])
@@ -598,19 +645,50 @@
                   [(a2) (select_instructions_atm a2)])
        (append mov_rax
                `(,(Instr 'cmpq `(,a2 ,a1)) ,(JmpIf 'ge l1) ,(Jmp l2))))]
-    [(Return x) (append (assign_helper (Reg 'rax) x) (list (Jmp 'conclusion)))]
-    [else (error "select instructions tail " e)]
-    ))
+    [(Return (FunRef f n)) (list (Instr 'leaq (list (Global f) (Reg 'rax))))] ;;;;;;;;;
+    [(Return x) (append (assign_helper (Reg 'rax) x) (list (Jmp fn_conc_label)))]
+    [(TailCall fun args*) ;;;;;;;;;;
+     (define arg_moves (map
+                  (lambda (idx)
+                        (Instr 'movq (list (select_instructions_atm (list-ref args* idx)) (list-ref arguments idx))))
+                      (range 0 (length args*))))
+     (append arg_moves
+               (list (TailJmp fun (length args*))))]
+    
+    [else (error "select instructions tail " e)]))
+
+
+(define (select_instructions_fun f)
+  (match f
+    [(Def fn_label fn_arg fn_ret info basic-blocks)
+     (define num-params (length fn_arg))
+     (define arg_names (map car fn_arg))
+     (define arg_moves (map (lambda (idx)
+                              (Instr 'movq `(,(list-ref arguments idx) ,(Var (list-ref arg_names idx)))))
+                            (range 0 num-params)))
+     (define fn_start_label (string->symbol (string-append (symbol->string fn_label) "start")))
+     (define fn_conc_label (string->symbol (string-append (symbol->string fn_label) "conclusion")))
+     (define start-block-compiled
+      (cons fn_start_label  (Block '() (append
+                                        arg_moves
+                                        (select_instructions_tail (dict-ref basic-blocks fn_start_label) fn_conc_label)))))
+     
+     (define other-blocks (dict-remove basic-blocks fn_start_label))
+     (define other-blocks-compiled (map (lambda (block)
+                                          (let ([label (car block)]
+                                                [body (cdr block)])
+                                            `(,label . ,(Block '() (select_instructions_tail body fn_conc_label)))))
+                                        other-blocks))
+     (define x86-blocks `(,start-block-compiled . ,other-blocks-compiled))
+     
+     (Def fn_label '() fn_ret (dict-set info 'num-params num-params) x86-blocks)]))
 
 
 
 ;; select-instructions : C0 -> pseudo-x86
 (define (select-instructions p)
   (match p
-    [(CProgram info blocks)
-     (let ([blocks (for/list ([block blocks])
-                    `(,(car block) . ,(Block '() (select_instructions_tail (cdr block)))))])
-       (X86Program info blocks))]))
+    [(ProgramDefs info fn) (ProgramDefs info (map select_instructions_fun fn))]))
 
 (define (get-parent-reg r)
   (match r
@@ -655,6 +733,8 @@
   [(Instr 'movzbq (list a b))(set-union (get-loc a))]
   [(Instr 'cmpq (list a b)) (set-union (get-loc a) (get-loc b))]
   [(Callq label arity) (list->set (get-k-el arguments arity))]
+  [(IndirectCallq arg arity) (set-union (set arg) (list->set (get-k-el arguments arity)))]
+  [(TailJmp arg arity) (set-union (set arg) (list->set (get-k-el arguments arity)))]
   [else (set)]))
 
 (define (get-write instr)
@@ -666,7 +746,10 @@
   [(Instr 'subq (list a b)) (set-union (get-loc b))]
   [(Instr 'xorq (list a b)) (set-union (get-loc b))]
   [(Instr 'set (list cc b)) (set-union (get-loc b))]
+  [(Instr 'leaq (list a b)) (set (get-loc b))]
   [(Callq label arity) (list->set caller-saved)]
+  [(IndirectCallq label arity) (list->set caller-saved)]
+  [(TailJmp label arity) (list->set caller-saved)]
   [else (set)]))
 
 
@@ -694,19 +777,19 @@
     (uncover-live-instr reverse-blk-body (list (set)) label->live))
 
 
-(define (add-edge-block body g)
+(define (add-edge-block body g fn_conc_label)
   (if (empty? body) g
       (let* ([cur-label-blk (car body)])
         (match cur-label-blk
           [(cons cur-blk-label (Block info cur-blk-body))
            (for/list ([instr cur-blk-body])
              (match instr
-               [(Jmp 'conclusion) (void)]
-               [(JmpIf _ 'conclusion) (void)]
+               [(Jmp fn_conc_label) (void)]
+               [(JmpIf _ fn_conc_label) (void)]
                [(Jmp dest-label) (add-directed-edge! g cur-blk-label dest-label)]
                [(JmpIf _ dest-label) (add-directed-edge! g cur-blk-label dest-label)]
                [else (void)]))
-           (add-edge-block (cdr body) g)]))))
+           (add-edge-block (cdr body) g fn_conc_label)]))))
 
 
 ;; Analyze Dataflow
@@ -728,23 +811,28 @@
                   (enqueue! worklist v))]))
   mapping)
 
-;; Liveliness Analysis
-(define (uncover-live p)
-  (match p
-    [(X86Program info body)
+(define (uncover-live-fun f)
+  (match f
+    [(Def fn_label '() fn_ret info basic-blocks)
      (define label->live (make-hash))
-     (dict-set! label->live 'conclusion  (set (Reg 'rax) (Reg 'rsp)))
-     (define labels (dict-keys body))
+     (define fn_conc_label (string->symbol (string-append (symbol->string fn_label) "conclusion")))
+     (dict-set! label->live fn_conc_label  (set (Reg 'rax) (Reg 'rsp)))
+     (define labels (dict-keys basic-blocks))
      (define g (make-multigraph '()))
      (for/list ([l labels]) (add-vertex! g l))
-     (define block-graph (add-edge-block body g))
-     (set! label->live (analyze_dataflow g body label->live))
-     (define blk-body (for/list ([blk body])
+     (define block-graph (add-edge-block basic-blocks g fn_conc_label))
+     (set! label->live (analyze_dataflow g basic-blocks label->live))
+     (define blk-body (for/list ([blk basic-blocks])
                         (match blk
                           [(cons blk-label (Block info block-body))
                            (define blk-live-after (uncover-live-block block-body label->live))
                            (cons blk-label (Block (dict-set info 'live-after blk-live-after) block-body))])))
-     (X86Program (dict-set info 'label->live label->live) blk-body)]))
+     (Def fn_label '() fn_ret (dict-set info 'label->live label->live) blk-body)]))
+
+;; Liveliness Analysis
+(define (uncover-live p)
+  (match p
+    [(ProgramDefs info defs) (ProgramDefs info (map uncover-live-fun defs))]))
 
 
 ;; check whether a given element is a vector
@@ -814,14 +902,18 @@
      (build-interference-instr block-body (cdr live-after) (undirected-graph '()) locals-types)]))
 
 
+(define (build-interference-fun f)
+  (match f
+    [(Def fn_label '() fn_ret info basic-blocks)
+     (define graph (undirected-graph '()))
+     (define locals-types (dict-ref info 'locals-types))
+     (for/list ([blk basic-blocks]) (graph-union! graph (build-interference-block blk locals-types)))
+     (Def fn_label '() fn_ret (dict-set info 'conflicts graph) basic-blocks)]))
+
 ;;build-interference
 (define (build-interference p)
   (match p
-    [(X86Program info body)
-     (define graph (undirected-graph '()))
-     (define locals-types (dict-ref info 'locals-types))
-     (for/list ([blk body]) (graph-union! graph (build-interference-block blk locals-types)))
-     (X86Program (dict-set info 'conflicts graph) body)]))
+    [(ProgramDefs info fn) (ProgramDefs info (map build-interference-fun fn))]))
 
 
 (define (gen-init-vertex-color g)
@@ -927,6 +1019,8 @@
     [(Instr op (list e1 e2)) (Instr op (list
                                         (allocate-reg-imm e1 var/vec-reg-map callee-saved locals-types)
                                         (allocate-reg-imm e2 var/vec-reg-map callee-saved locals-types)))]
+    [(TailJmp arg n) (TailJmp (allocate-reg-imm arg var/vec-reg-map callee-saved locals-types) n)]
+    [(IndirectCallq arg n) (IndirectCallq (allocate-reg-imm arg var/vec-reg-map callee-saved locals-types) n)]
     [_ i]))
 
 (define (get-spilled-vars var-reg-map spilled-vars spilled-vecs locals-types)
@@ -952,10 +1046,10 @@
  (define (calculate_stack_frame spilled-vars used-callee)
    (- (align (* 8 (+ (length spilled-vars) (length used-callee))) 16) (* 8 (length used-callee))))
 
-;; allocate registers
-(define (allocate-registers p)
-  (match p
-    [(X86Program info body)
+
+(define (allocate-registers-fun f)
+  (match f
+    [(Def fn_label '() fn_ret info basic-blocks)
      (define g (dict-ref info 'conflicts))
      (define init-color (gen-init-vertex-color g))
      (define init-saturation (gen-init-saturation g init-color))
@@ -973,6 +1067,8 @@
                  (cons v (list-ref alloc-registers (dict-ref final-colors v)))]
                 [else (set! variable-stack-position (add1 variable-stack-position))
                       (cons v variable-stack-position)])) variables))
+     
+
      (define vec-reg-map
        (map (lambda (v)
               (cond
@@ -980,21 +1076,27 @@
                  (cons v (list-ref alloc-registers (dict-ref final-colors v)))]
                 [else (set! vector-stack-position (add1 vector-stack-position))
                       (cons v vector-stack-position)])) vectors))
-
      (define var/vec-reg-map (append var-reg-map vec-reg-map))
-
      (define-values (spilled-vars spilled-vecs) (get-spilled-vars var/vec-reg-map '() '() locals-types))
-     
      (define used-callee (get-used-callee var/vec-reg-map '()))
-     
      (define stack-space (calculate_stack_frame spilled-vars used-callee))
      (define root-stack-space (* 8 (length spilled-vecs)))
-     (define blk-body (for/list ([blk body])
+     (display stack-space)
+     (display root-stack-space)
+     (display "\n")
+     (define blk-body (for/list ([blk basic-blocks])
                         (match blk
                           [(cons label (Block bl-info bl-body))
                            (cons label (Block bl-info (for/list ([e bl-body]) (allocate-reg-instr e var/vec-reg-map callee-saved locals-types))))])))
-     (X86Program
-      (dict-set* info 'stack-space stack-space 'used-callee used-callee 'root-stack-space root-stack-space) blk-body)]))
+     (Def fn_label '() fn_ret
+          (dict-set* info 'stack-space stack-space 'used-callee used-callee 'root-stack-space root-stack-space)
+          blk-body)]))
+
+
+;; allocate registers
+(define (allocate-registers p)
+  (match p
+    [(ProgramDefs info fn) (ProgramDefs info (map allocate-registers-fun fn))]))
 
 
 (define (patch_instr  instr)
@@ -1310,12 +1412,12 @@
     ("limit functions", limit-functions, interp-Lfun-prime, type-check-Lfun)
     ("expose allocation", expose-allocation, interp-Lfun-prime, type-check-Lfun)
     ("uncover-get", uncover-get!, interp-Lfun-prime, type-check-Lfun)
-    ;;;  ("remove complex opera*", remove-complex-opera*, interp-Lvec-prime, type-check-Lvec)
-    ;;;  ("explicate control" ,explicate-control , interp-Cvec ,type-check-Cvec)
-    ;;;  ("instruction selection" , select-instructions ,interp-pseudo-x86-2)
-    ;;;  ("uncover live", uncover-live, interp-pseudo-x86-2)
-    ;;;  ("build interference", build-interference, interp-pseudo-x86-2)
-    ;;;  ("allocate registers", allocate-registers , interp-pseudo-x86-2)
+    ("remove complex opera*", remove-complex-opera*, interp-Lfun-prime, type-check-Lfun)
+    ("explicate control" ,explicate-control , interp-Cfun ,type-check-Cfun)
+    ("instruction selection" , select-instructions ,interp-pseudo-x86-3)
+    ("uncover live", uncover-live, interp-pseudo-x86-3)
+    ("build interference", build-interference, interp-pseudo-x86-3)
+    ("allocate registers", allocate-registers , interp-pseudo-x86-3)
     ;;;  ("patch instructions" ,patch-instructions , interp-pseudo-x86-2)
     ;;;  ("prelude-and-conclusion" ,prelude-and-conclusion , interp-pseudo-x86-2)
      ))
