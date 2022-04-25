@@ -134,8 +134,7 @@
       [(Begin es body) (Begin (for/list ([e es]) ((uniquify-exp env) e)) ((uniquify-exp env) body))]
       [(SetBang x exp) (SetBang (dict-ref env x) ((uniquify-exp env) exp))]
       [(WhileLoop cond body) (WhileLoop ((uniquify-exp env) cond) ((uniquify-exp env) body))]
-      [else (display e)]
-      )))
+      [else (display "Couldn't match in uniquify-exp ")])))
 
 ;; uniquify : R1 -> R1
 (define (uniquify p)
@@ -1137,6 +1136,7 @@
     [(Bool b) (Bool b)]
     [(Int i) (Int i)]
     [(Var v) (Var v)]
+    [(FunRef f n) (FunRef f n)]
     [(If c t e) (If (exp-alloc c) (exp-alloc t) (exp-alloc e))]
     [(Let x e b) (Let x (exp-alloc e) (exp-alloc b))]
     [(HasType (Prim 'vector es) t)
@@ -1159,16 +1159,7 @@
                               (append x (list '_) (list v) (make-list len '_))
                               (append es (list collec) (list alloc) v_exps)
                               )])
-          (helper_write_lets all_exprs (Var v))
-     )
-     ]
-    ;;; Primitives
-    ;;; [(Prim 'and `(,e1 ,e2)) (let ([e1 (shrink-exp e1)]
-    ;;;                               [e2 (shrink-exp e2)])
-    ;;;                               (If e1 e2 (Bool #f)))]
-    ;;; [(Prim 'or `(,e1 ,e2))  (let ([e1 (shrink-exp e1)]
-    ;;;                               [e2 (shrink-exp e2)])
-    ;;;                               (If e1 (Bool #t) e2))]
+          (helper_write_lets all_exprs (Var v)))]
     [(Prim 'vector-ref `(,t ,(Int i))) (Prim 'vector-ref `(,(exp-alloc t) ,(Int i)))]
     [(Prim 'vector-set! `(,t ,(Int i) ,e)) (Prim 'vector-set! `(,(exp-alloc t) ,(Int i) ,(exp-alloc e)))]
     [(Prim op es)
@@ -1176,13 +1167,17 @@
     [(WhileLoop cond body) (WhileLoop (exp-alloc cond) (exp-alloc body))]
     [(Begin es body) (Begin (for/list ([ex es]) (exp-alloc ex)) (exp-alloc body))]
     [(SetBang x exp) (SetBang x (exp-alloc exp))]
-    ;;; Primitive end
-    )
-  )
+    [(Apply fun arg*) (Apply (exp-alloc fun) (map exp-alloc arg*))]))
 
 (define (expose-allocation p)
   (match p
-    [(Program info e) (Program info (exp-alloc e))]))
+    [(ProgramDefs info fn)
+     (ProgramDefs info
+                  (for/list
+                      ([f fn])
+                    (match f
+                      [(Def fn_label fn_arg fn_ret '() fn_exp)
+                       (Def fn_label fn_arg fn_ret '() (exp-alloc fn_exp))])))]))
 
 
 (define (reveal-functions-exp env e)
@@ -1225,35 +1220,84 @@
 
 
 
-;;; (define max_arg_lim 6)
+(define max_arg_lim 6)
 
-;;; (define (limit-def args))
 
-;;; (define (limit-functions p)
-;;;   (match p
-;;;     [(ProgramDefs info fn)
-;;;      (define limit-def-body (for/list ([f fn])
-;;;                       (match f
-;;;                         [(Def fn_label fn_arg fn_ret '() fn_exp)
-;;;                          (if (> (length fn_arg) max_arg_lim)
-;;;                              (Def fn_label (limit-def fn_arg) fn_ret '() (limit-body fn_exp fn_args))
-;;;                              f)])))
+(define (limit-apply exp)
+  (match exp
+    [(Let x rhs body) (Let x (limit-apply rhs) (limit-apply body))]
+    [(HasType e t) (HasType (limit-apply e) t)]
+    [(If c t e) (If (limit-apply c) (limit-apply t) (limit-apply e))]
+    [(Prim op es) (Prim op (map (lambda (i) (limit-apply i)) es))]
+    [(Apply fun arg*)
+     (define applied-arg* (map (lambda (i) (limit-apply i)) arg*))
+     (cond 
+         [(> (length arg*) max_arg_lim)
+          (define unfolded_arg_list (take applied-arg* 5))
+          (define folded_arg (Prim 'vector (drop applied-arg* 5)))
+          (Apply (limit-apply fun) (append unfolded_arg_list (list folded_arg)))]
+         [else (Apply (limit-apply fun) applied-arg*)])]
+    [else exp]))
 
-;;;      (ProgramDefs info
-;;;                   (for/list
-;;;                       ([f fn])
-;;;                     (match f
-;;;                       [(Def fn_label fn_arg fn_ret '() fn_exp)
-;;;                        (Def fn_label fn_arg fn_ret '() (reveal-functions-exp fn-arity fn_exp))])))]))
 
+(define (limit-body fn_exp vector_args vector_name)
+  (match fn_exp
+    [(Var x)
+     (if (member x vector_args)
+         (Prim 'vector-ref `(,(Var vector_name) ,(Int (index-of vector_args x))))
+         (Var x))]
+    [(FunRef f n)
+     (if (member f vector_args)
+         (Prim 'vector-ref `(,(Var vector_name) ,(Int (index-of vector_args f))))
+         (FunRef f n))]    
+    [(HasType e t) (HasType (limit-body e vector_args vector_name) t)]
+    [(If c t e)
+     (If (limit-body c vector_args vector_name)
+         (limit-body t vector_args vector_name)
+         (limit-body e vector_args vector_name))]
+    [(Let x rhs body) (Let x
+                           (limit-body rhs vector_args vector_name)
+                           (limit-body body vector_args vector_name))]
+    [(Prim op es) (Prim op (map (lambda (i) (limit-body i vector_args vector_name)) es))]
+    [(Apply fun arg*) (Apply
+                       (limit-body fun vector_args vector_name)
+                       (map (lambda (i) (limit-body i vector_args vector_name)) arg*))]
+    [else fn_exp]))
+
+(define (limit-def f)
+  (match f
+  [(Def fn_label fn_arg fn_ret '() fn_exp)
+   
+   (define types (map caddr fn_arg))
+   (define vector_name (gensym 'arg6+))
+   (define vector_args (map car (drop fn_arg 5)))
+   (define new_fn_arg (append (take fn_arg 5) `((,vector_name : ,(cons 'Vector (drop types 5))))))
+   (define new_fn_exp (limit-body fn_exp vector_args vector_name))
+   (Def fn_label new_fn_arg fn_ret '() new_fn_exp)]))
+
+(define (limit-functions p)
+  (match p
+    [(ProgramDefs info fn)
+     (define limit-def-body (for/list ([f fn])
+                      (match f
+                        [(Def fn_label fn_arg fn_ret '() fn_exp)
+                         (if (> (length fn_arg) max_arg_lim)
+                             (limit-def f)
+                             f)])))
+     (define limit-apply-body (for/list ([f limit-def-body])
+                      (match f
+                        [(Def fn_label fn_arg fn_ret '() fn_exp)
+                         (Def fn_label fn_arg fn_ret '() (limit-apply fn_exp))])))
+     (ProgramDefs info limit-apply-body)]))
 
 (define compiler-passes
   `(
     ;;;  ("pe-Lvar", pe-Lvar, interp-Lvar)
-     ("shrink", shrink, interp-Lfun, type-check-Lfun)
-     ("uniquify" ,uniquify , interp-Lfun-prime, type-check-Lfun)
-     ("reveal functions", reveal-functions, interp-Lfun-prime, type-check-Lfun)
-    ;;;  ("expose allocation", expose-allocation, interp-Lvec-prime, type-check-Lvec)
+    ("shrink", shrink, interp-Lfun, type-check-Lfun)
+    ("uniquify" ,uniquify , interp-Lfun-prime, type-check-Lfun)
+    ("reveal functions", reveal-functions, interp-Lfun-prime, type-check-Lfun)
+    ("limit functions", limit-functions, interp-Lfun-prime, type-check-Lfun)
+    ("expose allocation", expose-allocation, interp-Lfun-prime, type-check-Lfun)
     ;;;  ("uncover-get", uncover-get!, interp-Lvec-prime)
     ;;;  ("remove complex opera*", remove-complex-opera*, interp-Lvec-prime, type-check-Lvec)
     ;;;  ("explicate control" ,explicate-control , interp-Cvec ,type-check-Cvec)
