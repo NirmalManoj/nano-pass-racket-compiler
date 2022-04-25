@@ -1115,22 +1115,23 @@
     [(Instr 'leaq (list a (Deref  reg offset)))
      (list (Instr 'leaq (list a (Reg 'rax)))
            (Instr 'movq (list (Reg 'rax) (Deref reg offset))))]
+    [(TailJmp arg arity) (list (Instr 'movq (list arg (Reg 'rax))) (TailJmp (Reg 'rax) arity))]
     [else (list instr)]))
 
 (define (patch_block block)
   (match block
-    [(Block info block_body)
-    (Block info (append* (for/list ([instr block_body]) (patch_instr instr))))]))
+    [(cons label (Block info block_body))
+    (cons label (Block info (append* (for/list ([instr block_body]) (patch_instr instr)))))]))
 
+(define (patch-instructions-fun f)
+  (match f
+    [(Def fn_label '() fn_ret info basic-blocks) (Def fn_label '() fn_ret info (map patch_block basic-blocks))]))
+
+; define
 ;; patch-instructions : psuedo-x86 -> x86
 (define (patch-instructions p)
   (match p
-    [(X86Program info body)
-     (X86Program info (for/list ([blk body])
-                        (match blk
-                          [`(,label . ,block) (cons label (patch_block block))]
-                          )
-                        ))]))
+    [(ProgramDefs info fn) (ProgramDefs info (map patch-instructions-fun fn))]))
 
 (define (prelude_conclude_block blck)
   (match blck
@@ -1421,7 +1422,7 @@
     ("uncover live", uncover-live, interp-pseudo-x86-3)
     ("build interference", build-interference, interp-pseudo-x86-3)
     ("allocate registers", allocate-registers , interp-pseudo-x86-3)
-    ;;;  ("patch instructions" ,patch-instructions , interp-pseudo-x86-2)
+    ("patch instructions" ,patch-instructions , interp-pseudo-x86-3)
     ;;;  ("prelude-and-conclusion" ,prelude-and-conclusion , interp-pseudo-x86-2)
      ))
 
