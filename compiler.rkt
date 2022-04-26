@@ -1081,9 +1081,6 @@
      (define used-callee (get-used-callee var/vec-reg-map '()))
      (define stack-space (calculate_stack_frame spilled-vars used-callee))
      (define root-stack-space (* 8 (length spilled-vecs)))
-     (display stack-space)
-     (display root-stack-space)
-     (display "\n")
      (define blk-body (for/list ([blk basic-blocks])
                         (match blk
                           [(cons label (Block bl-info bl-body))
@@ -1115,7 +1112,7 @@
     [(Instr 'leaq (list a (Deref  reg offset)))
      (list (Instr 'leaq (list a (Reg 'rax)))
            (Instr 'movq (list (Reg 'rax) (Deref reg offset))))]
-    [(TailJmp arg arity) (list (Instr 'movq (list arg (Reg 'rax))) (TailJmp (Reg 'rax) arity))]
+    [(TailJmp arg arity) (list (Instr 'movq (list  arg (Reg 'rax))) (TailJmp (Reg 'rax) arity))]
     [else (list instr)]))
 
 (define (patch_block block)
@@ -1136,6 +1133,7 @@
 
 
 (define (prelude_conclude_block blck info_f)
+  (display "I am here")
   (define callee-saved (dict-ref info_f 'used-callee))
   ;;; (define push-callee-list (for/list ([r callee-saved]) (Instr 'pushq (list r))))
   (define pop-callee-list (for/list ([r callee-saved]) (Instr 'popq (list r))))
@@ -1146,13 +1144,14 @@
       [(Jmp 'main) (cond [(equal? (system-type 'os) 'macosx) (prelude-conclude-instr (cdr instr-list) (append accu (list (Jmp '_main))))]
                                               [else (prelude-conclude-instr (cdr instr-list) (append accu (list (Jmp 'main))))])]
       [(TailJmp arg arity)
+       (display arg)
        (prelude-conclude-instr (cdr instr-list) (append accu (list
                                                          (Instr 'subq (list (Imm (dict-ref info_f 'root-stack-space)) (Reg 'r15)))
                                                          (Instr 'addq (list (Imm (dict-ref info_f 'stack-space)) (Reg 'rsp))))
                                                    pop-callee-list
                                                    (list
                                                     (Instr 'popq (list (Reg 'rbp)))
-                                                    (Jmp arg))))]
+                                                    (TailJmp arg 1))))]
       [_ (prelude-conclude-instr (cdr instr-list) (append accu (list (car instr-list))))]
       )))
   (match blck
@@ -1226,7 +1225,6 @@
                                                   zero-out-list
                                                   (list (Instr 'addq (list (Imm (dict-ref info 'root-stack-space)) (Reg 'r15)))
                                                   (Jmp fn_start_label)))))))
-    (display prelude-block)
     (define name_main (cond
                         [(equal? (system-type 'os) 'macosx) '_main]
                         [else 'main]))
@@ -1259,7 +1257,6 @@
     (define updated-basic-blocks (append basic-blocks conc-block (cond 
                                                             [(eq? fn_label 'main) prelude-main]
                                                             [else prelude-block])))
-    (display updated-basic-blocks)
     (Def fn_label '() fn_ret info (map (lambda (x) (prelude_conclude_block x info)) updated-basic-blocks))
     ]
   )

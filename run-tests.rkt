@@ -38,7 +38,7 @@
 (interp-tests "int" type-check-Lfun compiler-passes interp-Lfun "int_test" (tests-for "int"))
 (interp-tests "cond" type-check-Lfun compiler-passes interp-Lfun "cond_test" (tests-for "cond"))
 (interp-tests "while" type-check-Lfun compiler-passes interp-Lfun "while_test" (tests-for "while"))
-(interp-tests "vec" type-check-Lfun compiler-passes interp-Lfun "vectors_test" (tests-for "vectors"))
+;(interp-tests "vec" type-check-Lfun compiler-passes interp-Lfun "vectors_test" (tests-for "vectors"))
 (interp-tests "functions" type-check-Lfun compiler-passes interp-Lfun "functions_test" (tests-for "functions"))
 
 ;; Uncomment the following when all the passes are complete to
