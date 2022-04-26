@@ -48,3 +48,4 @@
 ;;; (compiler-tests "cond" type-check-Lvec compiler-passes "cond_test" (tests-for "cond"))
 ;;; (compiler-tests "while" type-check-Lvec compiler-passes "while_test" (tests-for "while"))
 ;;; (compiler-tests "vec" type-check-Lvec compiler-passes "vectors_test" (tests-for "vectors"))
+(compiler-tests "functions" type-check-Lfun compiler-passes "functions_test" (tests-for "functions"))

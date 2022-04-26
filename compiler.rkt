@@ -1078,7 +1078,7 @@
                       (cons v vector-stack-position)])) vectors))
      (define var/vec-reg-map (append var-reg-map vec-reg-map))
      (define-values (spilled-vars spilled-vecs) (get-spilled-vars var/vec-reg-map '() '() locals-types))
-     (define used-callee (get-used-callee var/vec-reg-map '()))
+     (define used-callee (set->list (list->set (get-used-callee var/vec-reg-map '()))))
      (define stack-space (calculate_stack_frame spilled-vars used-callee))
      (define root-stack-space (* 8 (length spilled-vecs)))
      (define blk-body (for/list ([blk basic-blocks])
@@ -1133,76 +1133,24 @@
 
 
 (define (prelude_conclude_block blck info_f)
-  (display "I am here")
   (define callee-saved (dict-ref info_f 'used-callee))
-  ;;; (define push-callee-list (for/list ([r callee-saved]) (Instr 'pushq (list r))))
   (define pop-callee-list (for/list ([r callee-saved]) (Instr 'popq (list r))))
-
   (define (prelude-conclude-instr instr-list accu)
     (if (empty? instr-list) accu
     (match (car instr-list)
-      [(Jmp 'main) (cond [(equal? (system-type 'os) 'macosx) (prelude-conclude-instr (cdr instr-list) (append accu (list (Jmp '_main))))]
-                                              [else (prelude-conclude-instr (cdr instr-list) (append accu (list (Jmp 'main))))])]
       [(TailJmp arg arity)
-       (display arg)
        (prelude-conclude-instr (cdr instr-list) (append accu (list
                                                          (Instr 'subq (list (Imm (dict-ref info_f 'root-stack-space)) (Reg 'r15)))
                                                          (Instr 'addq (list (Imm (dict-ref info_f 'stack-space)) (Reg 'rsp))))
                                                    pop-callee-list
                                                    (list
                                                     (Instr 'popq (list (Reg 'rbp)))
-                                                    (TailJmp arg 1))))]
+                                                    (IndirectJmp arg))))]
       [_ (prelude-conclude-instr (cdr instr-list) (append accu (list (car instr-list))))]
       )))
   (match blck
     [(cons label (Block info block_body))
      (cons label (Block info (prelude-conclude-instr block_body '())))]))
-
-
-;; prelude-and-conclusion : x86 -> x86
-;;; (define (prelude-and-conclusion p)
-;;;   (match p
-;;;     [(X86Program info body)
-;;;      (define callee-saved (dict-ref info 'used-callee))
-;;;      (define push-callee-list (for/list ([r callee-saved]) (Instr 'pushq (list r))))
-;;;      (define pop-callee-list (for/list ([r callee-saved]) (Instr 'popq (list r))))
-;;;      (define zero-out-list (for/list ([r (range 0 (quotient (dict-ref info 'root-stack-space) 8))])
-;;;                              (Instr 'movq (list (Imm 0) (Deref 'r15 (* 8 r))))))
-;;;      (define main-block (list (cons 'main (Block '()
-;;;                                                 (append
-;;;                                                  (list
-;;;                                                   (Instr 'pushq (list (Reg 'rbp)))
-;;;                                                   (Instr 'movq (list (Reg 'rsp) (Reg 'rbp))))
-;;;                                                  push-callee-list
-;;;                                                  (list
-;;;                                                   (Instr 'subq (list (Imm (dict-ref info 'stack-space)) (Reg 'rsp)))
-;;;                                                   (Instr 'movq (list (Imm 65536) (Reg 'rdi)))
-;;;                                                   (Instr 'movq (list (Imm 65536) (Reg 'rsi)))
-;;;                                                   (Callq 'initialize 2)
-;;;                                                   (Instr 'movq (list (Global 'rootstack_begin) (Reg 'r15))))
-;;;                                                   zero-out-list
-;;;                                                   (list (Instr 'addq (list (Imm (dict-ref info 'root-stack-space)) (Reg 'r15)))
-;;;                                                   (Jmp 'start)))))))
-;;;      (define conc-block (list (cons 'conclusion (Block '()
-;;;                                                        (append
-;;;                                                         (list
-;;;                                                          (Instr 'subq (list (Imm (dict-ref info 'root-stack-space)) (Reg 'r15)))
-;;;                                                          (Instr 'addq (list (Imm (dict-ref info 'stack-space)) (Reg 'rsp))))
-;;;                                                         pop-callee-list
-;;;                                                         (list
-;;;                                                          (Instr 'popq (list (Reg 'rbp)))
-                                                         
-;;;                                                          (Retq))
-;;;                                                         )))))
-;;;      (define program (append main-block body conc-block))
-;;;      (cond
-;;;        [(equal? (system-type 'os) 'macosx)
-;;;         (X86Program info (for/list ([blk program])
-;;;           (match blk
-;;;             [`('main . ,block) (cons '_main (prelude_conclude_block block))]
-;;;             [`(,label . ,block) (cons label (prelude_conclude_block block))])))]
-;;;        [else (X86Program info program)])]))
-
 
 (define (prelude-and-conclusion-fun f)
   (match f
@@ -1214,6 +1162,7 @@
     (define zero-out-list (for/list ([r (range 0 (quotient (dict-ref info 'root-stack-space) 8))])
                             (Instr 'movq (list (Imm 0) (Deref 'r15 (* 8 r))))))
     (define fn_start_label (string->symbol (string-append (symbol->string fn_label) "start")))
+    (define fn_conc_label (string->symbol (string-append (symbol->string fn_label) "conclusion")))
     (define prelude-block (list (cons fn_label (Block '()
                                                 (append
                                                  (list
@@ -1225,10 +1174,7 @@
                                                   zero-out-list
                                                   (list (Instr 'addq (list (Imm (dict-ref info 'root-stack-space)) (Reg 'r15)))
                                                   (Jmp fn_start_label)))))))
-    (define name_main (cond
-                        [(equal? (system-type 'os) 'macosx) '_main]
-                        [else 'main]))
-    (define prelude-main (list (cons name_main (Block '()
+    (define prelude-main (list (cons 'main (Block '()
                                                 (append
                                                  (list
                                                   (Instr 'pushq (list (Reg 'rbp)))
@@ -1243,7 +1189,7 @@
                                                   zero-out-list
                                                   (list (Instr 'addq (list (Imm (dict-ref info 'root-stack-space)) (Reg 'r15)))
                                                   (Jmp 'mainstart)))))))
-      (define conc-block (list (cons 'conclusion (Block '()
+      (define conc-block (list (cons fn_conc_label (Block '()
                                                   (append
                                                   (list
                                                     (Instr 'subq (list (Imm (dict-ref info 'root-stack-space)) (Reg 'r15)))
@@ -1257,14 +1203,16 @@
     (define updated-basic-blocks (append basic-blocks conc-block (cond 
                                                             [(eq? fn_label 'main) prelude-main]
                                                             [else prelude-block])))
-    (Def fn_label '() fn_ret info (map (lambda (x) (prelude_conclude_block x info)) updated-basic-blocks))
+    (map (lambda (x) (prelude_conclude_block x info)) updated-basic-blocks)
     ]
   )
 )
 
 (define (prelude-and-conclusion p)
   (match p
-    [(ProgramDefs info fn) (ProgramDefs info (map prelude-and-conclusion-fun fn))]))
+    [(ProgramDefs info fn)
+     (define fun-blocks  (map prelude-and-conclusion-fun fn))
+     (X86Program info (append* fun-blocks))]))
 
 
 ;; Chapter 4
@@ -1500,6 +1448,6 @@
     ("build interference", build-interference, interp-pseudo-x86-3)
     ("allocate registers", allocate-registers , interp-pseudo-x86-3)
     ("patch instructions" ,patch-instructions , interp-pseudo-x86-3)
-    ("prelude-and-conclusion" ,prelude-and-conclusion , interp-pseudo-x86-3)
+    ("prelude-and-conclusion" ,prelude-and-conclusion, #f)
      ))
 
